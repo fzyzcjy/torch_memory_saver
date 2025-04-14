@@ -19,9 +19,43 @@ memory_saver.pause()
 memory_saver.resume()
 ```
 
+## Installation
+
+For the library to work properly, it needs to be preloaded using the `LD_PRELOAD` environment variable.
+
+### Option 1: Run a single command
+
+After installation, you can run your scripts with:
+
+```bash
+tms python your_script.py
+```
+
+### Option 2: Activate for the current shell session
+
+To activate torch_memory_saver for all Python programs in your current shell:
+
+```bash
+source tms
+# Now run your Python programs normally
+python your_script.py
+```
+
+### Option 3: Add to your shell profile
+
+To make torch_memory_saver available in all your shells, add this line to your `~/.bashrc` or `~/.zshrc`:
+
+```bash
+source $(which tms)
+```
+
+## Technical Details
+
+This library uses CUDA driver API functions to manage the lifetime of CUDA memory allocations. It requires `LD_PRELOAD` to intercept CUDA memory allocation calls made by PyTorch.
+
 Please refer to https://github.com/sgl-project/sglang/issues/2542#issuecomment-2563641647 for details.
 
-TODO:
+## TODO:
 
 - [x] Implementation
 - [x] Publish to pypi

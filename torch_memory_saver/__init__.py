@@ -3,7 +3,6 @@ import logging
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional
 
 import torch
@@ -59,7 +58,10 @@ class _BinaryInfo:
     def compute():
         env_ld_preload = os.environ.get('LD_PRELOAD', '')
         if 'torch_memory_saver' in env_ld_preload:
-            return _BinaryInfo(cdll=ctypes.CDLL(env_ld_preload))
+            paths = env_ld_preload.split(':')
+            lib_path = next((path for path in paths if 'torch_memory_saver' in path), None)
+            if lib_path:
+                return _BinaryInfo(cdll=ctypes.CDLL(lib_path))
         else:
             logger.warning(
                 f'TorchMemorySaver is disabled for the current process because invalid LD_PRELOAD="{env_ld_preload}" (process_id={os.getpid()})')
@@ -83,33 +85,3 @@ class _GlobalInfo:
 
 
 _global_info = _GlobalInfo()
-
-
-def get_binary_path():
-    dir_package = Path(__file__).parent
-    candidates = [
-        p
-        for d in [dir_package, dir_package.parent]
-        for p in d.glob('torch_memory_saver_cpp.*.so')
-    ]
-    assert len(candidates) == 1, f'{candidates=}'
-    return candidates[0]
-
-
-@contextmanager
-def configure_subprocess():
-    with change_env('LD_PRELOAD', str(get_binary_path())):
-        yield
-
-
-@contextmanager
-def change_env(key: str, value: str):
-    old_value = os.environ.get(key, '')
-    os.environ[key] = value
-    logger.debug(f'change_env set key={key} value={value}')
-    try:
-        yield
-    finally:
-        assert os.environ[key] == value
-        os.environ[key] = old_value
-        logger.debug(f'change_env restore key={key} value={old_value}')
