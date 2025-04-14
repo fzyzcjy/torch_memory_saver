@@ -1,0 +1,39 @@
+#!/bin/bash
+
+# Get the absolute path to the library
+LIB_PATH=$(python -c "
+import torch_memory_saver, importlib.machinery, pathlib, os
+package_dir = pathlib.Path(torch_memory_saver.__file__).parent
+ext_suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
+lib_name = f'torch_memory_saver_cpp{ext_suffix}'
+print(str(package_dir / lib_name))
+")
+
+# Detect if script is being sourced
+(return 0 2>/dev/null) && SOURCED=1 || SOURCED=0
+
+# Handle sourcing case
+if [ $SOURCED -eq 1 ]; then
+    # When the script is sourced, we export LD_PRELOAD and return
+    export LD_PRELOAD="$LIB_PATH${LD_PRELOAD:+:$LD_PRELOAD}"
+    echo "Environment activated: LD_PRELOAD now includes torch_memory_saver"
+    echo "Any Python programs run in this shell will use torch_memory_saver"
+    return 0
+fi
+
+# Handle execution case (not sourced)
+if [ "$#" -eq 0 ]; then
+    # Show help if no arguments
+    echo "torch_memory_saver (tms) runner"
+    echo ""
+    echo "Usage:"
+    echo "  tms python your_script.py     # Run a command with torch_memory_saver enabled"
+    echo "  source tms                    # Activate for current shell session"
+    echo ""
+    echo "This tool ensures torch_memory_saver is properly loaded for PyTorch"
+    exit 0
+fi
+
+# If arguments are provided, run the command with LD_PRELOAD set
+export LD_PRELOAD="$LIB_PATH${LD_PRELOAD:+:$LD_PRELOAD}"
+exec "$@" 
