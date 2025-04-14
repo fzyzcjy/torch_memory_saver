@@ -24,9 +24,17 @@ def _find_cuda_home():
     return cuda_home
 
 cuda_home = Path(_find_cuda_home())
-include_dirs = [
-    str(cuda_home.resolve() / 'targets/x86_64-linux/include'),
-]
+include_dirs = []
+if (cuda_home / 'include').is_dir():
+    include_dirs.append(str((cuda_home / 'include').resolve()))
+else:
+    # Search for 'cuda_runtime_api.h' in subdirectories
+    for path in cuda_home.rglob('cuda_runtime_api.h'):
+        include_dirs.append(str(path.parent.resolve()))
+        break
+    else:
+        raise RuntimeError("Could not find CUDA include directory.")
+
 setup(
     name='torch_memory_saver',
     version='0.0.5',
