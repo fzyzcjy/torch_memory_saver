@@ -24,15 +24,41 @@ def _find_cuda_home():
             cuda_home = '/usr/local/cuda'
     return cuda_home
 
+def _find_cuda_dir(cuda_home, dir_name, target_file=None, alternative_dir=None, subdir=None):
+    """Find CUDA directories."""
+    cuda_home = Path(cuda_home)
+    dirs = []
 
-cuda_home = Path(_find_cuda_home())
-include_dirs = [
-    str(cuda_home.resolve() / 'targets/x86_64-linux/include'),
-]
-library_dirs = [
-    str(cuda_home.resolve() / 'lib64'),
-    str(cuda_home.resolve() / 'lib64/stubs'),
-]
+    # Check if main directory exists
+    if (cuda_dir := cuda_home / dir_name).is_dir():
+        dirs.append(str(cuda_dir.resolve()))
+    # Check alternative directory paths
+    elif alternative_dir and (cuda_dir := cuda_home / alternative_dir).is_dir():
+        dirs.append(str(cuda_dir.resolve()))
+    # Search by marker file if specified and main directory doesn't exist
+    elif target_file:
+        for path in cuda_home.rglob(target_file):
+            cuda_dir = path.parent
+            dirs.append(str(cuda_dir.resolve()))
+            break
+        else:
+            raise RuntimeError(f"Could not find CUDA {dir_name} directory nor {target_file} file.")
+    else:
+        raise RuntimeError(f"Could not find CUDA {dir_name} directory.")
+
+    # Check for subdirectories if specified
+    if subdir:
+        if (cuda_dir := cuda_dir / subdir).is_dir():
+            dirs.append(str(cuda_dir.resolve()))
+        else:
+            raise RuntimeError(f"Could not find CUDA {cuda_dir} sub-directory.")
+
+    return dirs
+
+
+cuda_home = _find_cuda_home()
+include_dirs = _find_cuda_dir(cuda_home, 'include', target_file='cuda_runtime_api.h')
+library_dirs = _find_cuda_dir(cuda_home, 'lib', alternative_dir='lib64', subdir='stubs')
 
 setup(
     name='torch_memory_saver',
