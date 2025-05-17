@@ -6,6 +6,7 @@
 #include <dlfcn.h>
 #include <unordered_map>
 #include <mutex>
+#include <vector>
 
 // #define TMS_DEBUG_LOG
 
@@ -32,6 +33,9 @@
         exit(1); \
     } \
   } while (false)
+
+// very naive
+#define CUDA_ERROR_CHECK(EXPR) SIMPLE_CHECK((EXPR) == cudaSuccess, "Fail CUDA_ERROR_CHECK")
 
 // very naive
 #define CURESULT_CHECK(EXPR) \
@@ -118,6 +122,13 @@ struct _AllocationMetadata {
     size_t size;
     CUdevice device;
     CUmemGenericAllocationHandle allocHandle;
+    // TODO if this is costly, do not put it here, but make a separate map
+    std::vector<uint8_t> cpuBackup;
+};
+
+enum CopyDirection {
+    DEVICE_TO_HOST,
+    HOST_TO_DEVICE,
 };
 
 class TorchMemorySaver {
@@ -218,6 +229,35 @@ public:
         }
     }
 
+    // TODO optimize later e.g. speedup
+    void copy_between_device_host(CopyDirection direction) {
+        const std::lock_guard <std::mutex> lock(allocator_metadata_mutex_);
+
+        for (auto it = allocation_metadata_.begin(); it != allocation_metadata_.end(); ++it) {
+            void *ptr = it->first;
+            _AllocationMetadata& metadata = it->second;
+
+            switch(direction) {
+                case DEVICE_TO_HOST:
+                    metadata.cpuBackup.resize(metadata.size);
+                    CUDA_ERROR_CHECK(cudaMemcpy(metadata.cpuBackup.data(), ptr, metadata.size, cudaMemcpyDeviceToHost));
+                    break;
+
+                case HOST_TO_DEVICE:
+                    CUDA_ERROR_CHECK(cudaMemcpy(ptr, metadata.cpuBackup.data(), metadata.size, cudaMemcpyHostToDevice));
+                    metadata.cpuBackup = std::vector<uint8_t>();
+                    break;
+            }
+
+#ifdef TMS_DEBUG_LOG
+            std::cout << "[torch_memory_saver.cpp] TorchMemorySaver.gpu2cpu"
+                      << " ptr=" << ptr << " metadata.size=" << metadata.size << " metadata.allocHandle="
+                      << metadata.allocHandle
+                      << std::endl;
+#endif
+        }
+    }
+
     static TorchMemorySaver &instance() {
         static TorchMemorySaver instance;
         return instance;
@@ -284,5 +324,13 @@ void tms_pause() {
 
 void tms_resume() {
     TorchMemorySaver::instance().resume();
+}
+
+void tms_copy_host_to_device() {
+    TorchMemorySaver::instance().copy_between_device_host(CopyDirection::HOST_TO_DEVICE);
+}
+
+void tms_copy_device_to_host() {
+    TorchMemorySaver::instance().copy_between_device_host(CopyDirection::DEVICE_TO_HOST);
 }
 }
