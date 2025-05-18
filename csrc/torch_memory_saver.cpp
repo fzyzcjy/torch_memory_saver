@@ -249,7 +249,7 @@ public:
     // TODO optimize later e.g. speedup
     void copy_between_device_host(CopyDirection direction, bool fuse_resume) {
         const std::lock_guard <std::mutex> lock(allocator_metadata_mutex_);
-        
+
         // TODO merge to below
         for (auto it = allocation_metadata_.begin(); it != allocation_metadata_.end(); ++it) {
             void *ptr = it->first;
