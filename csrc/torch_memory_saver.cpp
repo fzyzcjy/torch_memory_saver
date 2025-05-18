@@ -32,7 +32,9 @@
 #define SIMPLE_CHECK(COND, MSG) \
   do { \
     if (!(COND)) { \
-        std::cerr << "[torch_memory_saver.cpp] " << MSG << std::endl; \
+        std::cerr << "[torch_memory_saver.cpp] " << MSG \
+                  << "  at " << __FILE__ << ":" << __LINE__ \
+                  << " in function " << __func__ << std::endl; \
         exit(1); \
     } \
   } while (false)
