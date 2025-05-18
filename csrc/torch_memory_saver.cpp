@@ -273,7 +273,8 @@ public:
 
                     case HOST_TO_DEVICE:
                         CUDA_ERROR_CHECK(cudaMemcpyAsync(ptr, metadata.cpuBackup, metadata.size, cudaMemcpyHostToDevice, chosenStream));
-                        metadata.cpuBackup = std::vector<uint8_t>();
+                        CUDA_ERROR_CHECK(cudaFreeHost(metadata.cpuBackup));
+                        metadata.cpuBackup = nullptr;
                         break;
                 }
             }
