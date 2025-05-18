@@ -257,18 +257,21 @@ public:
     void copy_between_device_host(CopyDirection direction, bool fuse_resume) {
         const std::lock_guard <std::mutex> lock(allocator_metadata_mutex_);
 
+        // TODO refactor
+        int64_t free_mem = CUDAUtils::cuda_mem_get_info_free_mem();
+
         // TODO merge to below
         for (auto it = allocation_metadata_.begin(); it != allocation_metadata_.end(); ++it) {
             void *ptr = it->first;
             _AllocationMetadata& metadata = it->second;
 
             if (fuse_resume) {
+                // TODO refactor
                 while (true) {
-                    size_t free_mem = CUDAUtils::cuda_mem_get_info_free_mem();
+                    if (free_mem < metadata.size + 3 * 1024 * 1024) { break; }
 
-                    if (free_mem >= metadata.size + 3 * 1024 * 1024) {
-                        break;
-                    }
+                    int64_t free_mem = CUDAUtils::cuda_mem_get_info_free_mem();
+                    if (free_mem < metadata.size + 3 * 1024 * 1024) { break; }
 
                     std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }
@@ -278,6 +281,8 @@ public:
                 CURESULT_CHECK(cuMemMap((CUdeviceptr) ptr, metadata.size, 0, newAllocHandle, 0));
                 CUDAUtils::cu_mem_set_access(ptr, metadata.size, metadata.device);
                 metadata.allocHandle = newAllocHandle;
+
+                free_mem -= metadata.size;
             }
         }
 
