@@ -249,7 +249,7 @@ public:
                     size_t total_mem = 0;
                     CUDA_ERROR_CHECK(cudaMemGetInfo(&free_mem, &total_mem));
 
-                    if (free_mem >= metadata.size + 10000) {
+                    if (free_mem >= metadata.size + 3 * 1024 * 1024) {
                         break;
                     }
 
