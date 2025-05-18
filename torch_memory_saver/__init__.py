@@ -6,15 +6,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+import torch
+
 logger = logging.getLogger(__name__)
 
 
 class TorchMemorySaver:
     def __init__(self, enable_use_mem_pool=True):
         self.enable_use_mem_pool = enable_use_mem_pool
-        if enable_use_mem_pool:
-            import torch
-            self._mem_pool = torch.cuda.MemPool()
+        self._mem_pool = None
         self._id = _global_info.next_id()
         assert self._id == 1, 'Only support one single instance yet (multi-instance will be implemented later)'
 
@@ -22,12 +22,11 @@ class TorchMemorySaver:
     def region(self):
         if _global_info.binary_info.enabled:
             if self.enable_use_mem_pool:
-                import torch
+                self._ensure_mem_pool()
                 ctx = torch.cuda.use_mem_pool(self._mem_pool)
             else:
                 print('HACK: enable_use_mem_pool=False')
                 ctx = nullcontext()
-
             with ctx:
                 _global_info.binary_info.cdll.tms_region_enter()
                 try:
@@ -45,6 +44,14 @@ class TorchMemorySaver:
         if _global_info.binary_info.enabled:
             _global_info.binary_info.cdll.tms_resume()
 
+    @property
+    def enabled(self):
+        return _global_info.binary_info.enabled
+
+    def _ensure_mem_pool(self):
+        if self._mem_pool is None:
+            self._mem_pool = torch.cuda.MemPool()
+
 
 @dataclass
 class _BinaryInfo:
@@ -60,8 +67,12 @@ class _BinaryInfo:
         if 'torch_memory_saver' in env_ld_preload:
             return _BinaryInfo(cdll=ctypes.CDLL(env_ld_preload))
         else:
-            logger.warning(
-                f'TorchMemorySaver is disabled for the current process because invalid LD_PRELOAD="{env_ld_preload}" (process_id={os.getpid()})')
+            print(
+                f'TorchMemorySaver is disabled for the current process because invalid LD_PRELOAD. '
+                f'You can use configure_subprocess() utility, '
+                f'or directly specify `LD_PRELOAD=/path/to/torch_memory_saver_cpp.some-postfix.so python your_script.py. '
+                f'(LD_PRELOAD="{env_ld_preload}" process_id={os.getpid()})'
+            )
             return _BinaryInfo(cdll=None)
 
 
