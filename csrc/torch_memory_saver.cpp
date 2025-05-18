@@ -300,6 +300,10 @@ public:
                       << std::endl;
 #endif
         }
+
+        if (direction == DEVICE_TO_HOST) {
+            CUDA_ERROR_CHECK(cudaDeviceSynchronize());
+        }
     }
 
     static TorchMemorySaver &instance() {
