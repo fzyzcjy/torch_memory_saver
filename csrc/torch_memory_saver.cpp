@@ -40,9 +40,20 @@
   } while (false)
 
 // very naive
-#define CUDA_ERROR_CHECK(EXPR) SIMPLE_CHECK((EXPR) == cudaSuccess, "Fail CUDA_ERROR_CHECK")
+// TODO merge with above
+#define CUDA_ERROR_CHECK(EXPR) \
+  do { \
+    cudaError __result = (EXPR);
+    if (__result != cudaSuccess) { \
+        std::cerr << "[torch_memory_saver.cpp] cudaError error " \
+            << " result=" << __result << " file=" << __FILE__ << " func=" << __func__ << " line=" << __LINE__ \
+            << std::endl; \
+        exit(1); \
+    } \
+  } while (false)
 
 // very naive
+// TODO merge with above
 #define CURESULT_CHECK(EXPR) \
   do { \
     CUresult __result = (EXPR); \
