@@ -273,6 +273,7 @@ public:
 
                     case HOST_TO_DEVICE:
                         CUDA_ERROR_CHECK(cudaMemcpyAsync(ptr, metadata.cpuBackup, metadata.size, cudaMemcpyHostToDevice, chosenStream));
+                        // TODO if this is slow, do not do it here
                         CUDA_ERROR_CHECK(cudaFreeHost(metadata.cpuBackup));
                         metadata.cpuBackup = nullptr;
                         break;
