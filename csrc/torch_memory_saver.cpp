@@ -241,10 +241,6 @@ public:
             void *ptr = it->first;
             _AllocationMetadata& metadata = it->second;
 
-            if (!metadata.enableCpuBackup) {
-                continue;
-            }
-
             if (fuse_resume) {
                 while (true) {
                     size_t free_mem = 0;
@@ -265,19 +261,21 @@ public:
                 metadata.allocHandle = newAllocHandle;
             }
 
-            // TODO use a new stream?
-            cudaStream_t chosenStream = 0;
+            if (metadata.enableCpuBackup) {
+                // TODO use a new stream?
+                cudaStream_t chosenStream = 0;
 
-            switch(direction) {
-                case DEVICE_TO_HOST:
-                    CUDA_ERROR_CHECK(cudaMallocHost(&metadata.cpuBackup, metadata.size));
-                    CUDA_ERROR_CHECK(cudaMemcpyAsync(metadata.cpuBackup, ptr, metadata.size, cudaMemcpyDeviceToHost, chosenStream));
-                    break;
+                switch(direction) {
+                    case DEVICE_TO_HOST:
+                        CUDA_ERROR_CHECK(cudaMallocHost(&metadata.cpuBackup, metadata.size));
+                        CUDA_ERROR_CHECK(cudaMemcpyAsync(metadata.cpuBackup, ptr, metadata.size, cudaMemcpyDeviceToHost, chosenStream));
+                        break;
 
-                case HOST_TO_DEVICE:
-                    CUDA_ERROR_CHECK(cudaMemcpyAsync(ptr, metadata.cpuBackup, metadata.size, cudaMemcpyHostToDevice, chosenStream));
-                    metadata.cpuBackup = std::vector<uint8_t>();
-                    break;
+                    case HOST_TO_DEVICE:
+                        CUDA_ERROR_CHECK(cudaMemcpyAsync(ptr, metadata.cpuBackup, metadata.size, cudaMemcpyHostToDevice, chosenStream));
+                        metadata.cpuBackup = std::vector<uint8_t>();
+                        break;
+                }
             }
 
 #ifdef TMS_DEBUG_LOG
