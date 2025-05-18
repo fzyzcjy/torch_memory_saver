@@ -291,19 +291,16 @@ public:
             _AllocationMetadata& metadata = it->second;
 
             if (metadata.enableCpuBackup) {
-                // TODO use a new stream?
-                cudaStream_t chosenStream = 0;
-
                 switch(direction) {
                     case DEVICE_TO_HOST:
                         if (metadata.cpuBackup == nullptr) {
                             CUDA_ERROR_CHECK(cudaMallocHost(&metadata.cpuBackup, metadata.size));
                         }
-                        CUDA_ERROR_CHECK(cudaMemcpyAsync(metadata.cpuBackup, ptr, metadata.size, cudaMemcpyDeviceToHost, chosenStream));
+                        CUDA_ERROR_CHECK(cudaMemcpyAsync(metadata.cpuBackup, ptr, metadata.size, cudaMemcpyDeviceToHost));
                         break;
 
                     case HOST_TO_DEVICE:
-                        CUDA_ERROR_CHECK(cudaMemcpyAsync(ptr, metadata.cpuBackup, metadata.size, cudaMemcpyHostToDevice, chosenStream));
+                        CUDA_ERROR_CHECK(cudaMemcpyAsync(ptr, metadata.cpuBackup, metadata.size, cudaMemcpyHostToDevice));
                         // TODO free host memory later
                         break;
                 }
