@@ -43,7 +43,7 @@
 // TODO merge with above
 #define CUDA_ERROR_CHECK(EXPR) \
   do { \
-    cudaError __result = (EXPR);
+    cudaError __result = (EXPR); \
     if (__result != cudaSuccess) { \
         std::cerr << "[torch_memory_saver.cpp] cudaError error " \
             << " result=" << __result << " file=" << __FILE__ << " func=" << __func__ << " line=" << __LINE__ \
