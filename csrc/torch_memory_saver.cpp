@@ -268,10 +268,10 @@ public:
             if (fuse_resume) {
                 // TODO refactor
                 while (true) {
-                    if (free_mem < metadata.size + 3 * 1024 * 1024) { break; }
+                    if (free_mem >= metadata.size + 3 * 1024 * 1024) { break; }
 
                     int64_t free_mem = CUDAUtils::cuda_mem_get_info_free_mem();
-                    if (free_mem < metadata.size + 3 * 1024 * 1024) { break; }
+                    if (free_mem >= metadata.size + 3 * 1024 * 1024) { break; }
 
                     std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }
