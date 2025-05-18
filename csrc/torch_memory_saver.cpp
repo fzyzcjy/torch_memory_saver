@@ -130,6 +130,13 @@ namespace CUDAUtils {
         accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
         CURESULT_CHECK(cuMemSetAccess((CUdeviceptr) ptr, size, &accessDesc, 1));
     }
+
+    static size_t cuda_mem_get_info_free_mem() {
+        size_t free_mem = 0;
+        size_t total_mem = 0;
+        CUDA_ERROR_CHECK(cudaMemGetInfo(&free_mem, &total_mem));
+        return free_mem;
+    }
 }
 
 // ----------------------------------------------- primary class --------------------------------------------------
@@ -257,9 +264,7 @@ public:
 
             if (fuse_resume) {
                 while (true) {
-                    size_t free_mem = 0;
-                    size_t total_mem = 0;
-                    CUDA_ERROR_CHECK(cudaMemGetInfo(&free_mem, &total_mem));
+                    size_t free_mem = CUDAUtils::cuda_mem_get_info_free_mem();
 
                     if (free_mem >= metadata.size + 3 * 1024 * 1024) {
                         break;
