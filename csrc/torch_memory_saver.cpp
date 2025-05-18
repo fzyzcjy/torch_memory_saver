@@ -269,15 +269,15 @@ public:
 
                 switch(direction) {
                     case DEVICE_TO_HOST:
-                        CUDA_ERROR_CHECK(cudaMallocHost(&metadata.cpuBackup, metadata.size));
+                        if (metadata.cpuBackup == nullptr) {
+                            CUDA_ERROR_CHECK(cudaMallocHost(&metadata.cpuBackup, metadata.size));
+                        }
                         CUDA_ERROR_CHECK(cudaMemcpyAsync(metadata.cpuBackup, ptr, metadata.size, cudaMemcpyDeviceToHost, chosenStream));
                         break;
 
                     case HOST_TO_DEVICE:
                         CUDA_ERROR_CHECK(cudaMemcpyAsync(ptr, metadata.cpuBackup, metadata.size, cudaMemcpyHostToDevice, chosenStream));
-                        // TODO if this is slow, do not do it here
-                        CUDA_ERROR_CHECK(cudaFreeHost(metadata.cpuBackup));
-                        metadata.cpuBackup = nullptr;
+                        // TODO free host memory later
                         break;
                 }
             }
