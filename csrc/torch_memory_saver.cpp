@@ -6,6 +6,10 @@
 #include <dlfcn.h>
 #include <unordered_map>
 #include <mutex>
+#include <vector>
+#include <optional>
+#include <thread>
+#include <chrono>
 
 // #define TMS_DEBUG_LOG
 
@@ -28,12 +32,28 @@
 #define SIMPLE_CHECK(COND, MSG) \
   do { \
     if (!(COND)) { \
-        std::cerr << "[torch_memory_saver.cpp] " << MSG << std::endl; \
+        std::cerr << "[torch_memory_saver.cpp] " << MSG \
+                  << "  at " << __FILE__ << ":" << __LINE__ \
+                  << " in function " << __func__ << std::endl; \
         exit(1); \
     } \
   } while (false)
 
 // very naive
+// TODO merge with above
+#define CUDA_ERROR_CHECK(EXPR) \
+  do { \
+    cudaError __result = (EXPR); \
+    if (__result != cudaSuccess) { \
+        std::cerr << "[torch_memory_saver.cpp] cudaError error " \
+            << " result=" << __result << " file=" << __FILE__ << " func=" << __func__ << " line=" << __LINE__ \
+            << std::endl; \
+        exit(1); \
+    } \
+  } while (false)
+
+// very naive
+// TODO merge with above
 #define CURESULT_CHECK(EXPR) \
   do { \
     CUresult __result = (EXPR); \
@@ -110,6 +130,13 @@ namespace CUDAUtils {
         accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
         CURESULT_CHECK(cuMemSetAccess((CUdeviceptr) ptr, size, &accessDesc, 1));
     }
+
+    static size_t cuda_mem_get_info_free_mem() {
+        size_t free_mem = 0;
+        size_t total_mem = 0;
+        CUDA_ERROR_CHECK(cudaMemGetInfo(&free_mem, &total_mem));
+        return free_mem;
+    }
 }
 
 // ----------------------------------------------- primary class --------------------------------------------------
@@ -118,13 +145,21 @@ struct _AllocationMetadata {
     size_t size;
     CUdevice device;
     CUmemGenericAllocationHandle allocHandle;
+    bool enableCpuBackup;
+    // TODO if this is costly, do not put it here, but make a separate map
+    void* cpuBackup;
+};
+
+enum CopyDirection {
+    DEVICE_TO_HOST,
+    HOST_TO_DEVICE,
 };
 
 class TorchMemorySaver {
 public:
     TorchMemorySaver() {}
 
-    cudaError_t malloc(void **ptr, size_t size) {
+    cudaError_t malloc(void **ptr, size_t size, bool enableCpuBackup) {
         CUdevice device;
         CURESULT_CHECK(cuCtxGetDevice(&device));
 
@@ -137,7 +172,7 @@ public:
 
         {
             const std::lock_guard <std::mutex> lock(allocator_metadata_mutex_);
-            allocation_metadata_.emplace(*ptr, _AllocationMetadata{size, device, allocHandle});
+            allocation_metadata_.emplace(*ptr, _AllocationMetadata{size, device, allocHandle, enableCpuBackup});
         }
 
 #ifdef TMS_DEBUG_LOG
@@ -218,6 +253,72 @@ public:
         }
     }
 
+    // TODO optimize later e.g. speedup
+    void copy_between_device_host(CopyDirection direction, bool fuse_resume) {
+        const std::lock_guard <std::mutex> lock(allocator_metadata_mutex_);
+
+        // TODO refactor
+        int64_t free_mem = CUDAUtils::cuda_mem_get_info_free_mem();
+
+        // TODO merge to below
+        for (auto it = allocation_metadata_.begin(); it != allocation_metadata_.end(); ++it) {
+            void *ptr = it->first;
+            _AllocationMetadata& metadata = it->second;
+
+            if (fuse_resume) {
+                // TODO refactor
+                while (true) {
+                    if (free_mem >= metadata.size + 3 * 1024 * 1024) { break; }
+
+                    int64_t free_mem = CUDAUtils::cuda_mem_get_info_free_mem();
+                    if (free_mem >= metadata.size + 3 * 1024 * 1024) { break; }
+
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+
+                CUmemGenericAllocationHandle newAllocHandle;
+                CUDAUtils::cu_mem_create(&newAllocHandle, metadata.size, metadata.device);
+                CURESULT_CHECK(cuMemMap((CUdeviceptr) ptr, metadata.size, 0, newAllocHandle, 0));
+                CUDAUtils::cu_mem_set_access(ptr, metadata.size, metadata.device);
+                metadata.allocHandle = newAllocHandle;
+
+                free_mem -= metadata.size;
+            }
+        }
+
+        for (auto it = allocation_metadata_.begin(); it != allocation_metadata_.end(); ++it) {
+            void *ptr = it->first;
+            _AllocationMetadata& metadata = it->second;
+
+            if (metadata.enableCpuBackup) {
+                switch(direction) {
+                    case DEVICE_TO_HOST:
+                        if (metadata.cpuBackup == nullptr) {
+                            CUDA_ERROR_CHECK(cudaMallocHost(&metadata.cpuBackup, metadata.size));
+                        }
+                        CUDA_ERROR_CHECK(cudaMemcpyAsync(metadata.cpuBackup, ptr, metadata.size, cudaMemcpyDeviceToHost));
+                        break;
+
+                    case HOST_TO_DEVICE:
+                        CUDA_ERROR_CHECK(cudaMemcpyAsync(ptr, metadata.cpuBackup, metadata.size, cudaMemcpyHostToDevice));
+                        // TODO free host memory later
+                        break;
+                }
+            }
+
+#ifdef TMS_DEBUG_LOG
+            std::cout << "[torch_memory_saver.cpp] TorchMemorySaver.gpu2cpu"
+                      << " ptr=" << ptr << " metadata.size=" << metadata.size << " metadata.allocHandle="
+                      << metadata.allocHandle
+                      << std::endl;
+#endif
+        }
+
+        if (direction == DEVICE_TO_HOST) {
+            CUDA_ERROR_CHECK(cudaDeviceSynchronize());
+        }
+    }
+
     static TorchMemorySaver &instance() {
         static TorchMemorySaver instance;
         return instance;
@@ -230,12 +331,30 @@ private:
 };
 
 namespace RegionManager {
-    static thread_local bool is_interesting_region_ = false;
+    static thread_local std::optional<bool> is_interesting_region_;
+
+    bool get_init_is_interesting_region_from_env() {
+        const char* env = std::getenv("TMS_INIT_IS_INTERESTING_REGION");
+        if (env != nullptr) {
+            std::string val(env);
+            return val == "1" || val == "true" || val == "TRUE" || val == "yes" || val == "YES";
+        } else {
+            return false;
+        }
+    }
+
+    bool is_interesting_region() {
+        if (!is_interesting_region_.has_value()) {
+            is_interesting_region_ = get_init_is_interesting_region_from_env();
+        }
+        return is_interesting_region_.value();
+    }
 
     void enter() {
 #ifdef TMS_DEBUG_LOG
         std::cout << "[torch_memory_saver.cpp] tms_region_enter" << std::endl;
 #endif
+        SIMPLE_CHECK(is_interesting_region() == false, "Bad is_interesting_region_ state");
         is_interesting_region_ = true;
     }
 
@@ -243,30 +362,40 @@ namespace RegionManager {
 #ifdef TMS_DEBUG_LOG
         std::cout << "[torch_memory_saver.cpp] tms_region_leave" << std::endl;
 #endif
+        SIMPLE_CHECK(is_interesting_region() == true, "Bad is_interesting_region_ state");
         is_interesting_region_ = false;
     }
+}
 
-    bool is_interesting_region() {
-        return is_interesting_region_;
-    }
+namespace EnableCpuBackupRegionManager {
+    static thread_local bool enable_cpu_backup_ = true;
 }
 
 // ------------------------------------------------- entrypoints ------------------------------------------------
 
-cudaError_t cudaMalloc(void **ptr, size_t size) {
+// TODO
+cudaError_t tmsCudaMalloc(void **ptr, size_t size) {
     if (RegionManager::is_interesting_region()) {
-        return TorchMemorySaver::instance().malloc(ptr, size);
+        return TorchMemorySaver::instance().malloc(ptr, size, EnableCpuBackupRegionManager::enable_cpu_backup_);
     } else {
         return APIForwarder::call_real_cuda_malloc(ptr, size);
     }
 }
 
-cudaError_t cudaFree(void *ptr) {
+cudaError_t tmsCudaFree(void *ptr) {
     if (RegionManager::is_interesting_region()) {
         return TorchMemorySaver::instance().free(ptr);
     } else {
         return APIForwarder::call_real_cuda_free(ptr);
     }
+}
+
+cudaError_t cudaMalloc(void **ptr, size_t size) {
+    return tmsCudaMalloc(ptr, size);
+}
+
+cudaError_t cudaFree(void *ptr) {
+    return tmsCudaFree(ptr);
 }
 
 extern "C" {
@@ -285,4 +414,27 @@ void tms_pause() {
 void tms_resume() {
     TorchMemorySaver::instance().resume();
 }
+
+//void tms_copy_host_to_device() {
+//    TorchMemorySaver::instance().copy_between_device_host(CopyDirection::HOST_TO_DEVICE);
+//}
+
+void tms_resume_and_copy_host_to_device() {
+    TorchMemorySaver::instance().copy_between_device_host(CopyDirection::HOST_TO_DEVICE, true);
+}
+
+void tms_copy_device_to_host() {
+    TorchMemorySaver::instance().copy_between_device_host(CopyDirection::DEVICE_TO_HOST, false);
+}
+
+void tms_enable_cpu_backup() {
+    SIMPLE_CHECK(EnableCpuBackupRegionManager::enable_cpu_backup_ == false, "enable_cpu_backup_ bad");
+    EnableCpuBackupRegionManager::enable_cpu_backup_ = true;
+}
+
+void tms_disable_cpu_backup() {
+    SIMPLE_CHECK(EnableCpuBackupRegionManager::enable_cpu_backup_ == true, "enable_cpu_backup_ bad");
+    EnableCpuBackupRegionManager::enable_cpu_backup_ = false;
+}
+
 }

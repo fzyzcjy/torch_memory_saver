@@ -1,7 +1,7 @@
 import ctypes
 import logging
 import os
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -12,7 +12,8 @@ logger = logging.getLogger(__name__)
 
 
 class TorchMemorySaver:
-    def __init__(self):
+    def __init__(self, enable_use_mem_pool=True):
+        self.enable_use_mem_pool = enable_use_mem_pool
         self._mem_pool = None
         self._id = _global_info.next_id()
         assert self._id == 1, 'Only support one single instance yet (multi-instance will be implemented later)'
@@ -20,8 +21,13 @@ class TorchMemorySaver:
     @contextmanager
     def region(self):
         if _global_info.binary_info.enabled:
-            self._ensure_mem_pool()
-            with torch.cuda.use_mem_pool(self._mem_pool):
+            if self.enable_use_mem_pool:
+                self._ensure_mem_pool()
+                ctx = torch.cuda.use_mem_pool(self._mem_pool)
+            else:
+                print('HACK: enable_use_mem_pool=False')
+                ctx = nullcontext()
+            with ctx:
                 _global_info.binary_info.cdll.tms_region_enter()
                 try:
                     yield
