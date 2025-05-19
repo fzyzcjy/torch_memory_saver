@@ -373,7 +373,8 @@ namespace EnableCpuBackupRegionManager {
 
 // ------------------------------------------------- entrypoints ------------------------------------------------
 
-cudaError_t cudaMalloc(void **ptr, size_t size) {
+// TODO
+cudaError_t tmsCudaMalloc(void **ptr, size_t size) {
     if (RegionManager::is_interesting_region()) {
         return TorchMemorySaver::instance().malloc(ptr, size, EnableCpuBackupRegionManager::enable_cpu_backup_);
     } else {
@@ -381,12 +382,20 @@ cudaError_t cudaMalloc(void **ptr, size_t size) {
     }
 }
 
-cudaError_t cudaFree(void *ptr) {
+cudaError_t tmsCudaFree(void *ptr) {
     if (RegionManager::is_interesting_region()) {
         return TorchMemorySaver::instance().free(ptr);
     } else {
         return APIForwarder::call_real_cuda_free(ptr);
     }
+}
+
+cudaError_t cudaMalloc(void **ptr, size_t size) {
+    return tmsCudaMalloc(ptr, size);
+}
+
+cudaError_t cudaFree(void *ptr) {
+    return tmsCudaFree(ptr);
 }
 
 extern "C" {
