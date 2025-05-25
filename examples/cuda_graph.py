@@ -81,23 +81,23 @@ def run():
     print('torch.cuda.empty_cache()')
     torch.cuda.empty_cache()
 
-    print('sleep...')
+    print('before sleep...')
     time.sleep(3)
 
     print('call memory_saver.pause')
     memory_saver.pause()
 
-    print('sleep...')
+    print('after sleep...')
     time.sleep(3)
 
     print('when kv cache is released, we can allocate *other* big tensors')
     other_big_tensor = torch.zeros((2500_000_000,), dtype=torch.uint8, device='cuda')
-    print('sleep...')
+    print('before kv cache is released, sleep...')
     time.sleep(3)
     print(f'{other_big_tensor=}')
     del other_big_tensor
     torch.cuda.empty_cache()
-    print('sleep...')
+    print('after kv cache is released, sleep...')
     time.sleep(3)
 
     # this should fail
@@ -119,7 +119,7 @@ def run():
     print(f'{static_output=}')
     assert static_output == 202, f'{static_output=}'
 
-    print('sleep...')
+    print('after replay #2, sleep...')
     time.sleep(3)
 
     # print(f'{big_tensor=}')
