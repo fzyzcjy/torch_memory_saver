@@ -12,7 +12,7 @@ memory_saver = TorchMemorySaver()
 dummy_tensor_size = (5, 100_000_000,)
 
 
-def _ptr(x):
+def get_hex_ptr(x):
     assert isinstance(x, torch.Tensor)
     return hex(x.data_ptr())
 
@@ -25,7 +25,7 @@ class KVCache:
         with memory_saver.region():
             # or model weights, etc
             self.kv_buffer = torch.full(dummy_tensor_size, value, dtype=torch.float32, device='cuda')
-        print(f'create_buffers {_ptr(self.kv_buffer)=}')
+        print(f'create_buffers {get_hex_ptr(self.kv_buffer)=}')
 
     def clear_buffers(self):
         del self.kv_buffer
@@ -58,7 +58,7 @@ def run():
     cache = KVCache()
     static_input = torch.zeros((5,), dtype=torch.float32, device='cuda')
     static_output = torch.zeros((5,), dtype=torch.float32, device='cuda')
-    print(f'{_ptr(static_input)=} {_ptr(static_output)=}')
+    print(f'{get_hex_ptr(static_input)=} {get_hex_ptr(static_output)=}')
 
     def fn():
         nonlocal static_output
@@ -107,7 +107,7 @@ def run():
     memory_saver.resume()
 
     dummy = torch.zeros((3,), device='cuda')
-    print(f'{_ptr(dummy)=}')
+    print(f'{get_hex_ptr(dummy)=}')
 
     # cache.create_buffers(2)
 

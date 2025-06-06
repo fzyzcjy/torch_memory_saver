@@ -6,6 +6,7 @@ from pathlib import Path
 import platform
 import setuptools
 from setuptools import setup
+import subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ def _get_platform_architecture():
         try:
             uname_output = subprocess.check_output(["uname", "-a"], encoding="utf-8")
             if "tegra" in uname_output:
-                return f"{"tegra"}-{host_arch}"
+                return f"tegra-{host_arch}"
         except Exception as e:
             print(f"[warn] Failed to run uname: {e}")
 

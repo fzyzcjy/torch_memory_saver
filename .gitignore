@@ -3,3 +3,4 @@ build
 *.so
 .idea
 dist
+**/__pycache__/
