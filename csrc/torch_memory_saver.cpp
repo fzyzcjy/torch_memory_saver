@@ -136,7 +136,7 @@ public:
         CUDAUtils::cu_mem_set_access(*ptr, size, device);
 
         {
-            const std::lock_guard <std::mutex> lock(allocator_metadata_mutex_);
+            const std::lock_guard<std::mutex> lock(allocator_metadata_mutex_);
             allocation_metadata_.emplace(*ptr, _AllocationMetadata{size, device, allocHandle});
         }
 
@@ -187,6 +187,7 @@ public:
             std::cout << "[torch_memory_saver.cpp] TorchMemorySaver.pause"
                       << " ptr=" << ptr << " metadata.size=" << metadata.size << " metadata.allocHandle="
                       << metadata.allocHandle
+                      << " instance=" << this
                       << std::endl;
 #endif
         }
@@ -211,6 +212,7 @@ public:
                       << " ptr=" << ptr << " metadata.size=" << metadata.size << " (old)metadata.allocHandle="
                       << metadata.allocHandle
                       << " (new)newAllocHandle=" << newAllocHandle
+                      << " instance=" << this
                       << std::endl;
 #endif
 
@@ -218,71 +220,109 @@ public:
         }
     }
 
-    static TorchMemorySaver &instance() {
-        static TorchMemorySaver instance;
-        return instance;
-    }
-
 private:
-    // Similar to torch's CUDACachingAllocator and CUDAPluggableAllocator
     std::mutex allocator_metadata_mutex_;
     std::unordered_map<void *, _AllocationMetadata> allocation_metadata_;
 };
 
+// ----------------------------------------------- region manager ------------------------------------------------
+
 namespace RegionManager {
-    static thread_local bool is_interesting_region_ = false;
+    static thread_local TorchMemorySaver* current_saver_ = nullptr;
 
-    void enter() {
-#ifdef TMS_DEBUG_LOG
-        std::cout << "[torch_memory_saver.cpp] tms_region_enter" << std::endl;
-#endif
-        is_interesting_region_ = true;
+    void set_current_saver(TorchMemorySaver* saver) {
+        current_saver_ = saver;
     }
 
-    void leave() {
-#ifdef TMS_DEBUG_LOG
-        std::cout << "[torch_memory_saver.cpp] tms_region_leave" << std::endl;
-#endif
-        is_interesting_region_ = false;
-    }
-
-    bool is_interesting_region() {
-        return is_interesting_region_;
+    TorchMemorySaver* get_current_saver() {
+        return current_saver_;
     }
 }
 
 // ------------------------------------------------- entrypoints ------------------------------------------------
 
 cudaError_t cudaMalloc(void **ptr, size_t size) {
-    if (RegionManager::is_interesting_region()) {
-        return TorchMemorySaver::instance().malloc(ptr, size);
+    TorchMemorySaver* saver = RegionManager::get_current_saver();
+    if (saver != nullptr) {
+        return saver->malloc(ptr, size);
     } else {
         return APIForwarder::call_real_cuda_malloc(ptr, size);
     }
 }
 
 cudaError_t cudaFree(void *ptr) {
-    if (RegionManager::is_interesting_region()) {
-        return TorchMemorySaver::instance().free(ptr);
+    TorchMemorySaver* saver = RegionManager::get_current_saver();
+    if (saver != nullptr) {
+        return saver->free(ptr);
     } else {
         return APIForwarder::call_real_cuda_free(ptr);
     }
 }
 
 extern "C" {
-void tms_region_enter() {
-    RegionManager::enter();
+void tms_region_enter(TorchMemorySaver* saver) {
+    if (saver == nullptr) {
+        std::cerr << "[torch_memory_saver.cpp] FATAL: NULL saver passed to tms_region_enter" << std::endl;
+        exit(1);
+    }
+    
+    TorchMemorySaver* old_saver = RegionManager::get_current_saver();
+    if (old_saver != nullptr) {
+        std::cerr << "[torch_memory_saver.cpp] FATAL: Attempting to enter region with saver " << saver 
+                  << " but another saver " << old_saver << " is already active" << std::endl;
+        exit(1);
+    }
+    
+    RegionManager::set_current_saver(saver);
 }
 
-void tms_region_leave() {
-    RegionManager::leave();
+void tms_region_leave(TorchMemorySaver* saver) {
+    if (saver == nullptr) {
+        std::cerr << "[torch_memory_saver.cpp] FATAL: NULL saver passed to tms_region_leave" << std::endl;
+        exit(1);
+    }
+    
+    // Assert that the current saver matches the saver being passed in
+    TorchMemorySaver* current_saver = RegionManager::get_current_saver();
+    if (current_saver != saver) {
+        std::cerr << "[torch_memory_saver.cpp] FATAL: Attempting to leave region with saver " << saver 
+                  << " but current active saver is " << current_saver << std::endl;
+        exit(1);
+    }
+    
+    RegionManager::set_current_saver(nullptr);
 }
 
-void tms_pause() {
-    TorchMemorySaver::instance().pause();
+void tms_pause(TorchMemorySaver* saver) {
+    if (saver == nullptr) {
+        std::cerr << "[torch_memory_saver.cpp] FATAL: NULL saver passed to tms_pause" << std::endl;
+        exit(1);
+    }
+    saver->pause();
 }
 
-void tms_resume() {
-    TorchMemorySaver::instance().resume();
+void tms_resume(TorchMemorySaver* saver) {
+    if (saver == nullptr) {
+        std::cerr << "[torch_memory_saver.cpp] FATAL: NULL saver passed to tms_resume" << std::endl;
+        exit(1);
+    }
+    saver->resume();
+}
+
+TorchMemorySaver* tms_create() {
+    TorchMemorySaver* saver = new TorchMemorySaver();
+    if (saver == nullptr) {
+        std::cerr << "[torch_memory_saver.cpp] FATAL: Failed to create TorchMemorySaver instance" << std::endl;
+        exit(1);
+    }
+    return saver;
+}
+
+void tms_destroy(TorchMemorySaver* saver) {
+    if (saver == nullptr) {
+        std::cerr << "[torch_memory_saver.cpp] FATAL: NULL saver passed to tms_destroy" << std::endl;
+        exit(1);
+    }
+    delete saver;
 }
 }
