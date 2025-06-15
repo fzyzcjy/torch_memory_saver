@@ -14,14 +14,14 @@ logger = logging.getLogger(__name__)
 class TorchMemorySaver:
     def __init__(self):
         self._mem_pool = None
-        self._id = _global_info.next_id()
-        assert self._id == 1, 'Only support one single instance yet (multi-instance will be implemented later)'
 
     @contextmanager
-    def region(self):
+    def region(self, tag: str = "default"):
+        """Context manager for memory saving with optional tag"""
         if _global_info.binary_info.enabled:
             self._ensure_mem_pool()
             with torch.cuda.use_mem_pool(self._mem_pool):
+                _global_info.binary_info.cdll.tms_set_current_tag(tag.encode('utf-8'))
                 _global_info.binary_info.cdll.tms_region_enter()
                 try:
                     yield
@@ -30,13 +30,17 @@ class TorchMemorySaver:
         else:
             yield
 
-    def pause(self):
+    def pause(self, tag: Optional[str] = None):
+        """Pause memory for specific tag or all memory if tag is None"""
         if _global_info.binary_info.enabled:
-            _global_info.binary_info.cdll.tms_pause()
+            tag_bytes = tag.encode('utf-8') if tag else None
+            _global_info.binary_info.cdll.tms_pause(tag_bytes)
 
-    def resume(self):
+    def resume(self, tag: Optional[str] = None):
+        """Resume memory for specific tag or all memory if tag is None"""
         if _global_info.binary_info.enabled:
-            _global_info.binary_info.cdll.tms_resume()
+            tag_bytes = tag.encode('utf-8') if tag else None
+            _global_info.binary_info.cdll.tms_resume(tag_bytes)
 
     @property
     def enabled(self):
@@ -45,7 +49,6 @@ class TorchMemorySaver:
     def _ensure_mem_pool(self):
         if self._mem_pool is None:
             self._mem_pool = torch.cuda.MemPool()
-
 
 @dataclass
 class _BinaryInfo:
@@ -56,10 +59,25 @@ class _BinaryInfo:
         return self.cdll is not None
 
     @staticmethod
+    def _setup_function_signatures(cdll):
+        """Define function signatures for the C library"""
+        cdll.tms_region_enter.argtypes = []
+        cdll.tms_region_leave.argtypes = []
+        cdll.tms_set_current_tag.argtypes = [ctypes.c_char_p]
+        cdll.tms_pause.argtypes = [ctypes.c_char_p]
+        cdll.tms_resume.argtypes = [ctypes.c_char_p]
+
+    @staticmethod
     def compute():
         env_ld_preload = os.environ.get('LD_PRELOAD', '')
         if 'torch_memory_saver' in env_ld_preload:
-            return _BinaryInfo(cdll=ctypes.CDLL(env_ld_preload))
+            try:
+                cdll = ctypes.CDLL(env_ld_preload)
+                _BinaryInfo._setup_function_signatures(cdll)
+                return _BinaryInfo(cdll=cdll)
+            except OSError as e:
+                logger.error(f'Failed to load CDLL from {env_ld_preload}: {e}')
+                return _BinaryInfo(cdll=None)
         else:
             print(
                 f'TorchMemorySaver is disabled for the current process because invalid LD_PRELOAD. '
@@ -73,7 +91,6 @@ class _BinaryInfo:
 class _GlobalInfo:
     def __init__(self):
         self._binary_info: Optional[_BinaryInfo] = None
-        self._last_id = 0
 
     @property
     def binary_info(self):
@@ -81,13 +98,11 @@ class _GlobalInfo:
             self._binary_info = _BinaryInfo.compute()
         return self._binary_info
 
-    def next_id(self):
-        self._last_id += 1
-        return self._last_id
-
 
 _global_info = _GlobalInfo()
 
+# Global singleton instance
+torch_memory_saver = TorchMemorySaver()
 
 def get_binary_path():
     dir_package = Path(__file__).parent
@@ -96,7 +111,7 @@ def get_binary_path():
         for d in [dir_package, dir_package.parent]
         for p in d.glob('torch_memory_saver_cpp.*.so')
     ]
-    assert len(candidates) == 1, f'{candidates=}'
+    assert len(candidates) == 1, f'Expected exactly one torch_memory_saver_cpp library, found: {candidates}'
     return candidates[0]
 
 

@@ -1,11 +1,12 @@
 import logging
+import os
 import sys
 import time
-import os
 from typing import Callable
 
 import torch
 from torch_memory_saver import torch_memory_saver
+from examples.util import print_gpu_memory_gb
 
 logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
 
@@ -17,6 +18,27 @@ def _ptr(x):
     assert isinstance(x, torch.Tensor)
     return hex(x.data_ptr())
 
+class Model:
+    def __init__(self, input_size=20_480, output_size=20_480):
+        self.input_size = input_size
+        self.output_size = output_size
+        self.create_weights()
+    
+    def create_weights(self):
+        with torch_memory_saver.region(tag="model_weights"):
+            # Single linear layer (no bias)
+            self.linear = torch.nn.Linear(self.input_size, self.output_size, bias=False, device='cuda')
+            # Initialize with ones for predictable output
+            torch.nn.init.ones_(self.linear.weight)
+        
+        print(f'create_weights {_ptr(self.linear.weight)=}')
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Single linear transformation
+        return self.linear(x).mean()  # Return scalar instead of tensor
+    
+    def clear_weights(self):
+        del self.linear
 
 class KVCache:
     def __init__(self):
@@ -56,7 +78,7 @@ def create_cuda_graph(fn: Callable):
 
 
 def run():
-    # Check if TorchMemorySaver is properly enabled
+    # Check if TorchMemorySaver is properly enabled  
     print(f"TorchMemorySaver enabled: {torch_memory_saver.enabled}")
     print(f"LD_PRELOAD: {os.environ.get('LD_PRELOAD', 'NOT SET')}")
     
@@ -65,13 +87,16 @@ def run():
         print("Make sure to set LD_PRELOAD properly.")
 
     cache = KVCache()
-    static_input = torch.zeros((5,), dtype=torch.float32, device='cuda')
-    static_output = torch.zeros((5,), dtype=torch.float32, device='cuda')
+    model = Model()
+    static_input = torch.zeros((20_480,), dtype=torch.float32, device='cuda')
+    static_output = torch.zeros((), dtype=torch.float32, device='cuda')
     print(f'{_ptr(static_input)=} {_ptr(static_output)=}')
 
     def fn():
         nonlocal static_output
-        static_output = cache.execute(static_input)
+        kv_output = cache.execute(static_input[:5])
+        model_output = model.forward(static_input)
+        static_output = kv_output + model_output
 
     g = create_cuda_graph(fn)
 
@@ -79,7 +104,8 @@ def run():
     static_input[...] = 100
     g.replay()
     print(f'{static_output=}')
-    assert static_output == 101, f'{static_output=}'
+    # KV: 101, Model: mean(100 * 1 * 20480) = 2,048,000
+    assert static_output == 2048101, f'{static_output=}'
 
     # cache.clear_buffers()
 
@@ -93,13 +119,21 @@ def run():
     print('sleep...')
     time.sleep(3)
 
-    print('call memory_saver.pause("kv_cache")')
+    print('Before pause kv_cache')
+    print_gpu_memory_gb("Before pause kv_cache")
+
     torch_memory_saver.pause("kv_cache")
+    print('After pause kv_cache')
+    print_gpu_memory_gb("After pause kv_cache")
+
+    torch_memory_saver.pause("model_weights")
+    print('After pause model_weights')
+    print_gpu_memory_gb("After pause model_weights")
 
     print('sleep...')
     time.sleep(3)
 
-    print('when kv cache is released, we can allocate *other* big tensors')
+    print('when kv cache and model weights are released, we can allocate *other* big tensors')
     other_big_tensor = torch.zeros((2500_000_000,), dtype=torch.uint8, device='cuda')
     print('sleep...')
     time.sleep(3)
@@ -112,8 +146,16 @@ def run():
     # this should fail
     # print(f'{cache.kv_buffer=}')
 
-    print('call memory_saver.resume("kv_cache")')
+    print('Before resume model_weights and kv_cache')
+    print_gpu_memory_gb("Before resume")
+    
+    torch_memory_saver.resume("model_weights")
+    print('After resume model_weights')
+    print_gpu_memory_gb("After resume model_weights")
+    
     torch_memory_saver.resume("kv_cache")
+    print('After resume kv_cache') 
+    print_gpu_memory_gb("After resume kv_cache")
 
     dummy = torch.zeros((3,), device='cuda')
     print(f'{_ptr(dummy)=}')
@@ -121,18 +163,41 @@ def run():
     # cache.create_buffers(2)
 
     cache.kv_buffer[...] = 2
+    with torch.no_grad():
+        model.linear.weight[...] = 2
 
     print('replay #2')
     static_input[...] = 200
     g.replay()
     print(f'{static_output=}')
-    assert static_output == 202, f'{static_output=}'
+    # KV: 202, Model: mean(200 * 2 * 20480) = 8,192,000  
+    assert static_output == 8192202, f'{static_output=}'
 
     print('sleep...')
     time.sleep(3)
 
     # print(f'{big_tensor=}')
     print(f'{dummy=}')
+
+    print("Succeed!")
+    print("=" * 100)
+    
+    # Additional test: demonstrate selective pause/resume
+    print("\n=== Additional test: selective pause/resume ===")
+    print("Pause only kv_cache, keep model_weights active")
+    torch_memory_saver.pause("kv_cache")
+    print_gpu_memory_gb("Only kv_cache paused")
+    
+    print("Try to access model weights (should work)")
+    try:
+        _ = model.linear.weight[0, 0]
+        print("Model weights access successful")
+    except:
+        print("Model weights access failed")
+    
+    print("Resume kv_cache")
+    torch_memory_saver.resume("kv_cache")
+    print_gpu_memory_gb("All resumed")
 
     # exit this process gracefully, bypassing CUDA cleanup
     # Checkout for more details: https://github.com/fzyzcjy/torch_memory_saver/pull/18 
