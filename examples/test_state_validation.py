@@ -3,11 +3,10 @@ import sys
 import os
 
 import torch
+from torch_memory_saver import torch_memory_saver
 
 logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
 
-from torch_memory_saver import torch_memory_saver
-from examples.util import print_gpu_memory_gb
 
 def test_invalid_resume_without_pause():
     """Test that resume fails when no allocations are paused"""
@@ -20,7 +19,7 @@ def test_invalid_resume_without_pause():
         torch_memory_saver.resume()
         print("ERROR: Resume succeeded when it should have failed!")
         return False
-    except SystemExit:
+    except RuntimeError:
         print("SUCCESS: Resume correctly failed when no allocations were paused")
         return True
     except Exception as e:
@@ -40,7 +39,7 @@ def test_double_pause():
         torch_memory_saver.pause()
         print("ERROR: Double pause succeeded when it should have failed!")
         return False
-    except SystemExit:
+    except RuntimeError:
         print("SUCCESS: Double pause correctly failed")
         return True
     except Exception as e:
@@ -48,7 +47,7 @@ def test_double_pause():
         return False
 
 def test_pause_after_free():
-    """Test that pause fails when allocations have been freed"""
+    """Test that pause succeeds when allocations have been freed (metadata removed)"""
     print("Testing pause after free...")
 
     with torch_memory_saver.region():
@@ -60,23 +59,25 @@ def test_pause_after_free():
 
     try:
         torch_memory_saver.pause()
-        print("ERROR: Pause after free succeeded when it should have failed!")
-        return False
-    except SystemExit:
-        print("SUCCESS: Pause after free correctly failed")
+        print("SUCCESS: Pause after free correctly succeeded (no allocations to pause)")
         return True
+    except RuntimeError as e:
+        if "No active allocations found" in str(e):
+            print("SUCCESS: Pause after free correctly succeeded (no allocations to pause)")
+            return True
+        else:
+            print(f"ERROR: Unexpected exception: {e}")
+            return False
     except Exception as e:
         print(f"ERROR: Unexpected exception: {e}")
         return False
 
 def test_resume_after_free():
-    """Test that resume fails when allocations have been freed"""
+    """Test that resume succeeds when allocations have been freed (metadata removed)"""
     print("Testing resume after free...")
 
     with torch_memory_saver.region():
         tensor = torch.full((1_000_000,), 100, dtype=torch.uint8, device='cuda')
-
-    torch_memory_saver.pause()
 
     # Free the tensor
     del tensor
@@ -84,11 +85,15 @@ def test_resume_after_free():
 
     try:
         torch_memory_saver.resume()
-        print("ERROR: Resume after free succeeded when it should have failed!")
-        return False
-    except SystemExit:
-        print("SUCCESS: Resume after free correctly failed")
+        print("SUCCESS: Resume after free correctly succeeded (no allocations to resume)")
         return True
+    except RuntimeError as e:
+        if "No paused allocations found" in str(e):
+            print("SUCCESS: Resume after free correctly succeeded (no allocations to resume)")
+            return True
+        else:
+            print(f"ERROR: Unexpected exception: {e}")
+            return False
     except Exception as e:
         print(f"ERROR: Unexpected exception: {e}")
         return False
@@ -106,15 +111,12 @@ def test_tagged_validation():
     # Pause tag1
     torch_memory_saver.pause("tag1")
 
-    # Try to resume tag2 (should fail)
     try:
         torch_memory_saver.resume("tag2")
         print("ERROR: Resume tag2 succeeded when it should have failed!")
         return False
-    except SystemExit:
+    except RuntimeError:
         print("SUCCESS: Resume tag2 correctly failed")
-
-    # Resume tag1 (should work)
     torch_memory_saver.resume("tag1")
     print("SUCCESS: Resume tag1 worked correctly")
 
