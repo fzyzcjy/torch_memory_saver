@@ -35,13 +35,23 @@ class TorchMemorySaver:
         """Pause memory for specific tag or all memory if tag is None"""
         if _global_info.binary_info.enabled:
             tag_bytes = tag.encode('utf-8') if tag else None
-            _global_info.binary_info.cdll.tms_pause(tag_bytes)
+            result = _global_info.binary_info.cdll.tms_pause(tag_bytes)
+            if result != 0:
+                if tag:
+                    raise RuntimeError(f"No active allocations found for tag: {tag}. Cannot pause paused or non-existent allocations.")
+                else:
+                    raise RuntimeError("No active allocations found. Cannot pause paused or non-existent allocations.")
 
     def resume(self, tag: Optional[str] = None):
         """Resume memory for specific tag or all memory if tag is None"""
         if _global_info.binary_info.enabled:
             tag_bytes = tag.encode('utf-8') if tag else None
-            _global_info.binary_info.cdll.tms_resume(tag_bytes)
+            result = _global_info.binary_info.cdll.tms_resume(tag_bytes)
+            if result != 0:
+                if tag:
+                    raise RuntimeError(f"No paused allocations found for tag: {tag}. Cannot resume unpaused or non-existent allocations.")
+                else:
+                    raise RuntimeError("No paused allocations found. Cannot resume unpaused or non-existent allocations.")
 
     @property
     def enabled(self):
@@ -66,7 +76,9 @@ class _BinaryInfo:
         cdll.tms_region_leave.argtypes = []
         cdll.tms_set_current_tag.argtypes = [ctypes.c_char_p]
         cdll.tms_pause.argtypes = [ctypes.c_char_p]
+        cdll.tms_pause.restype = ctypes.c_int
         cdll.tms_resume.argtypes = [ctypes.c_char_p]
+        cdll.tms_resume.restype = ctypes.c_int
 
     @staticmethod
     def compute():
