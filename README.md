@@ -58,6 +58,16 @@ torch_memory_saver.pause("type1")
 torch_memory_saver.resume("type1")
 ```
 
+### Example of RL with CUDA Graph
+
+Please refer to `rl_examples.py` for details.
+
+```bash
+pip install -e .
+cd examples
+bash run_rl_example.sh
+```
+
 ## Development
 
 ```bash
