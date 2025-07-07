@@ -188,7 +188,7 @@ public:
         return cudaSuccess;
     }
 
-    int pause(const std::string& tag) {
+    void pause(const std::string& tag) {
         const std::lock_guard <std::mutex> lock(allocator_metadata_mutex_);
 
         bool found_valid_allocation = false;
@@ -207,7 +207,7 @@ public:
                 }
                 error_msg += " ptr=" + std::to_string(reinterpret_cast<uintptr_t>(ptr));
                 std::cerr << "[torch_memory_saver.cpp] ERROR: " << error_msg << std::endl;
-                return -1;
+                std::exit(1);
             }
 
             found_valid_allocation = true;
@@ -231,13 +231,12 @@ public:
             }
             error_msg += ". Cannot pause paused or non-existent allocations.";
             std::cerr << "[torch_memory_saver.cpp] ERROR: " << error_msg << std::endl;
-            return -1;
+            std::exit(1);
         }
 
-        return 0;
     }
 
-    int resume(const std::string& tag) {
+    void resume(const std::string& tag) {
         const std::lock_guard <std::mutex> lock(allocator_metadata_mutex_);
 
         bool found_paused_allocation = false;
@@ -278,10 +277,8 @@ public:
             }
             error_msg += ". Cannot resume unpaused or non-existent allocations.";
             std::cerr << "[torch_memory_saver.cpp] ERROR: " << error_msg << std::endl;
-            return -1;
+            std::exit(1);
         }
-
-        return 0;
     }
 
     static TorchMemorySaver &instance() {
@@ -364,13 +361,13 @@ void tms_set_current_tag(const char* tag) {
     RegionManager::set_current_tag(std::string(tag));
 }
 
-int tms_pause(const char* tag) {
+void tms_pause(const char* tag) {
     std::string tag_str = (tag != nullptr) ? std::string(tag) : "";
-    return TorchMemorySaver::instance().pause(tag_str);
+    TorchMemorySaver::instance().pause(tag_str);
 }
 
-int tms_resume(const char* tag) {
+void tms_resume(const char* tag) {
     std::string tag_str = (tag != nullptr) ? std::string(tag) : "";
-    return TorchMemorySaver::instance().resume(tag_str);
+    TorchMemorySaver::instance().resume(tag_str);
 }
 }
