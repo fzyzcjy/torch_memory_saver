@@ -39,13 +39,19 @@ class TorchMemorySaver:
         """Pause memory for specific tag or all memory if tag is None"""
         if _global_info.binary_info.enabled:
             tag_bytes = tag.encode("utf-8") if tag else None
-            _global_info.binary_info.cdll.tms_pause(tag_bytes)
+            try:
+                _global_info.binary_info.cdll.tms_pause(tag_bytes)
+            except Exception as e:
+                raise e
 
     def resume(self, tag: Optional[str] = None):
         """Resume memory for specific tag or all memory if tag is None"""
         if _global_info.binary_info.enabled:
             tag_bytes = tag.encode("utf-8") if tag else None
-            _global_info.binary_info.cdll.tms_resume(tag_bytes)
+            try:
+                _global_info.binary_info.cdll.tms_resume(tag_bytes)
+            except Exception as e:
+                raise e
 
     @property
     def enabled(self):
