@@ -17,7 +17,7 @@ cudaError_t TorchMemorySaver::malloc(void **ptr, CUdevice device, size_t size, c
 
     {
         const std::lock_guard<std::mutex> lock(allocator_metadata_mutex_);
-        allocation_metadata_.emplace(*ptr, AllocationMetadata{size, device, allocHandle, tag, enable_cpu_backup, nullptr});
+        allocation_metadata_.emplace(*ptr, AllocationMetadata{size, device, allocHandle, tag, AllocationState::ACTIVE, enable_cpu_backup, nullptr});
     }
 
 #ifdef TMS_DEBUG_LOG
@@ -53,7 +53,7 @@ cudaError_t TorchMemorySaver::free(void *ptr) {
     return cudaSuccess;
 }
 
-void TorchMemorySaver::pause(const std::string& tag) {
+int TorchMemorySaver::pause(const std::string& tag) {
     const std::lock_guard <std::mutex> lock(allocator_metadata_mutex_);
 
     for (auto it = allocation_metadata_.begin(); it != allocation_metadata_.end(); ++it) {
@@ -62,6 +62,14 @@ void TorchMemorySaver::pause(const std::string& tag) {
 
         if (!tag.empty() && metadata.tag != tag) {
             continue;
+        }
+
+        if (metadata.state == AllocationState::PAUSED) {
+            std::cerr << "[torch_memory_saver.cpp] Cannot pause allocation that is already paused. "
+                      << "Tag: " << metadata.tag << ", Ptr: " << std::to_string((uintptr_t)ptr)
+                      << " file=" << __FILE__ << " func=" << __func__ << " line=" << __LINE__
+                      << std::endl;
+            return 1;
         }
 
         if (metadata.enable_cpu_backup) {
@@ -76,6 +84,8 @@ void TorchMemorySaver::pause(const std::string& tag) {
         CURESULT_CHECK(cuMemUnmap((CUdeviceptr) ptr, metadata.size));
         CURESULT_CHECK(cuMemRelease(metadata.allocHandle));
 
+        metadata.state = AllocationState::PAUSED;
+
 #ifdef TMS_DEBUG_LOG
         std::cout << "[torch_memory_saver.cpp] TorchMemorySaver.pause"
                   << " ptr=" << ptr << " metadata.size=" << metadata.size << " metadata.allocHandle="
@@ -84,9 +94,11 @@ void TorchMemorySaver::pause(const std::string& tag) {
                   << std::endl;
 #endif
     }
+
+    return 0;
 }
 
-void TorchMemorySaver::resume(const std::string& tag) {
+int TorchMemorySaver::resume(const std::string& tag) {
     const std::lock_guard <std::mutex> lock(allocator_metadata_mutex_);
 
     for (auto it = allocation_metadata_.begin(); it != allocation_metadata_.end(); ++it) {
@@ -95,6 +107,14 @@ void TorchMemorySaver::resume(const std::string& tag) {
 
         if (!tag.empty() && metadata.tag != tag) {
             continue;
+        }
+
+        if (metadata.state == AllocationState::ACTIVE) {
+            std::cerr << "[torch_memory_saver.cpp] Cannot resume allocation that is already active. "
+                      << "Tag: " << metadata.tag << ", Ptr: " << std::to_string((uintptr_t)ptr)
+                      << " file=" << __FILE__ << " func=" << __func__ << " line=" << __LINE__
+                      << std::endl;
+            return 1;
         }
 
         CUmemGenericAllocationHandle newAllocHandle;
@@ -119,7 +139,9 @@ void TorchMemorySaver::resume(const std::string& tag) {
                   << " metadata.enable_cpu_backup=" << metadata.enable_cpu_backup
                   << std::endl;
 #endif
-
+        metadata.state = AllocationState::ACTIVE;
         metadata.allocHandle = newAllocHandle;
     }
+
+    return 0;
 }

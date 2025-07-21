@@ -19,6 +19,30 @@ class BinaryWrapper:
         self.cdll.tms_set_interesting_region(interesting_region)
         self.cdll.tms_set_enable_cpu_backup(enable_cpu_backup)
 
+    def pause(self, tag: str = None) -> bool:
+        """
+        Pause memory allocations for the given tag.
+        Returns True on success, raises RuntimeError on failure.
+        """
+        tag_bytes = tag.encode("utf-8") if tag else None
+        result = self.cdll.tms_pause(tag_bytes)
+        if result != 0:
+            error_str = f"Cannot pause allocation that is already paused. Tag: {tag or 'default'}"
+            raise RuntimeError(error_str)
+        return True
+
+    def resume(self, tag: str = None) -> bool:
+        """
+        Resume memory allocations for the given tag.
+        Returns True on success, raises RuntimeError on failure.
+        """
+        tag_bytes = tag.encode("utf-8") if tag else None
+        result = self.cdll.tms_resume(tag_bytes)
+        if result != 0:
+            error_str = f"Cannot resume allocation that is already active. Tag: {tag or 'default'}"
+            raise RuntimeError(error_str)
+        return True
+
 
 def _setup_function_signatures(cdll):
     """Define function signatures for the C library"""
@@ -27,4 +51,6 @@ def _setup_function_signatures(cdll):
     cdll.tms_get_interesting_region.restype = ctypes.c_bool
     cdll.tms_set_enable_cpu_backup.argtypes = [ctypes.c_bool]
     cdll.tms_pause.argtypes = [ctypes.c_char_p]
+    cdll.tms_pause.restype = ctypes.c_int
     cdll.tms_resume.argtypes = [ctypes.c_char_p]
+    cdll.tms_resume.restype = ctypes.c_int
