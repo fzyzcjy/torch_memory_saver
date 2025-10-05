@@ -102,7 +102,7 @@ def _create_ext_modules(platform):
             str((platform_home / 'lib64').resolve()),
             str((platform_home / 'lib64/stubs').resolve()),
         ]
-        libraries = ['cuda']
+        libraries = ['cuda', 'cudart']
         platform_macros = [('USE_CUDA', '1')]
         extra_compile_args = ['-std=c++17', '-O3']
     
