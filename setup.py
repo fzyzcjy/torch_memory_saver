@@ -87,16 +87,21 @@ def _create_ext_modules(platform):
     
     # Common define macros
     common_macros = [('Py_LIMITED_API', '0x03090000')]
+
+    # Common compile arguments
+    extra_compile_args = ['-std=c++17', '-O3']
     
     # Platform-specific configurations
     platform_home = Path(_find_platform_home(platform))
     
     if platform == "hip":
+        # Add ROCm-specific source file
+        sources.append('csrc/hardware_amd_support.cpp')
+        
         include_dirs = [str(platform_home.resolve() / 'include')]
         library_dirs = [str(platform_home.resolve() / 'lib')]
         libraries = ['amdhip64', 'dl']
         platform_macros = [('USE_ROCM', '1')]
-        extra_compile_args = ['-std=c++17', '-O3']
     else:  # cuda
         include_dirs = [str((platform_home / 'include').resolve())]
         library_dirs = [
@@ -105,7 +110,6 @@ def _create_ext_modules(platform):
         ]
         libraries = ['cuda', 'cudart']
         platform_macros = [('USE_CUDA', '1')]
-        extra_compile_args = ['-std=c++17', '-O3']
     
     # Create extensions with different hook modes
     ext_modules = [

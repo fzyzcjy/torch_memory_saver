@@ -3,6 +3,10 @@
 #include "macro.h"
 #include "api_forwarder.h"
 
+#if defined(USE_ROCM)
+#include "hardware_amd_support.h"
+#endif
+
 TorchMemorySaver::TorchMemorySaver() {}
 
 TorchMemorySaver &TorchMemorySaver::instance() {
@@ -12,85 +16,25 @@ TorchMemorySaver &TorchMemorySaver::instance() {
 
 cudaError_t TorchMemorySaver::malloc(void **ptr, CUdevice device, size_t size, const std::string& tag, const bool enable_cpu_backup) {
 #if defined(USE_ROCM)
-    // hipDevice_t device;
-    CURESULT_CHECK(hipCtxGetDevice(&device));
-
-    // // Get granularity and calculate aligned size
-    // size_t granularity = CUDAUtils::cu_mem_get_granularity(device);
-    // size_t aligned_size = (size + granularity - 1) & ~(granularity - 1);
-
-    // //// Reserve aligned memory address, rocm will check granularity
-    // CURESULT_CHECK(hipMemAddressReserve((hipDeviceptr_t *)ptr, aligned_size, granularity, 0, 0));
-
-    hipMemAllocationProp prop = {};
-    prop.type = hipMemAllocationTypePinned;
-    prop.location.type = hipMemLocationTypeDevice;
-    prop.location.id = device;
-    prop.allocFlags.compressionType = 0x0;
-
-    size_t granularity;
-    CURESULT_CHECK(hipMemGetAllocationGranularity(&granularity, &prop,
-                                            hipMemAllocationGranularityMinimum));
-    size_t aligned_size = ((size + granularity - 1) / granularity) * granularity;
-    aligned_size = (aligned_size + MEMCREATE_CHUNK_SIZE - 1) / MEMCREATE_CHUNK_SIZE * MEMCREATE_CHUNK_SIZE;
-
-    assert(MEMCREATE_CHUNK_SIZE % granularity == 0);
-    assert(aligned_size % MEMCREATE_CHUNK_SIZE == 0);
-    assert(aligned_size % granularity == 0);
-
-
-    // Create allocation metadata
     AllocationMetadata metadata;
     metadata.size = size;
-    metadata.aligned_size = aligned_size;
     metadata.device = device;
-    //// Not sure (Check these parameters)
     metadata.tag = tag;
+    metadata.state = AllocationState::ACTIVE;
     metadata.enable_cpu_backup = enable_cpu_backup;
     metadata.cpu_backup = nullptr;
-    ////
 
-    // Get global device ID using our utility function
-    int global_device_id = DeviceUtils::get_global_device_id(device);
+    cudaError_t result = ROCmHIPImplementation::rocm_malloc(
+        ptr, device, size, tag, enable_cpu_backup,
+        metadata.aligned_size, metadata.allocHandles, metadata.chunk_sizes
+    );
 
-    // rewrite numa node 
-    uint64_t node_id = 0;
-    if (global_device_id > 3) {
-        node_id = 1;
-    }
-
-#ifdef TMS_DEBUG_LOG
-    std::cout << "[torch_memory_saver.cpp] TorchMemorySaver.cuda_malloc "
-              << " ptr=" << ptr << " *ptr=" << *ptr << " size=" << size
-              << " granularity=" << granularity
-              << " aligned_size=" << aligned_size
-              << " node_id=" << node_id
-              << " device=" << device
-              << " global_device_id=" << global_device_id
-              << std::endl;
-#endif
-
-    hipDeviceptr_t d_mem;
-    // Reserve aligned memory address, rocm will check granularity
-    CURESULT_CHECK(hipMemAddressReserve(&d_mem, aligned_size, granularity, 0, node_id));
-    *ptr = (void*)d_mem;
-
-    // Create and map chunks
-    // CUDAUtils::cu_mem_create_and_map(device, size, (hipDeviceptr_t)*ptr, 
-    CUDAUtils::cu_mem_create_and_map(device, aligned_size, (hipDeviceptr_t)*ptr, 
-                                    metadata.allocHandles, metadata.chunk_sizes);
-    size_t num_chunks = metadata.allocHandles.size();
-    {
+    if (result == cudaSuccess) {
         const std::lock_guard<std::mutex> lock(allocator_metadata_mutex_);
         allocation_metadata_.emplace(*ptr, std::move(metadata));
     }
-#ifdef TMS_DEBUG_LOG
-    std::cout << "[torch_memory_saver.cpp] TorchMemorySaver.cuda_malloc "
-              << " ptr=" << ptr << " *ptr=" << *ptr << " size=" << size
-              << " metadata.aligned_size=" << metadata.aligned_size
-              << " num_chunks=" << num_chunks
-              << std::endl;
-#endif
+
+    return result;
 
 #elif defined(USE_CUDA)
     CUmemGenericAllocationHandle allocHandle;
@@ -130,20 +74,11 @@ cudaError_t TorchMemorySaver::free(void *ptr) {
         allocation_metadata_.erase(ptr);
     }
 
-    // Unmap and release chunks
-    CUDAUtils::cu_mem_unmap_and_release(metadata.device, metadata.size, 
-                                        (hipDeviceptr_t)ptr, metadata.allocHandles, metadata.chunk_sizes);
+    return ROCmHIPImplementation::rocm_free(
+        ptr, metadata.size, metadata.aligned_size, metadata.device,
+        metadata.allocHandles, metadata.chunk_sizes
+    );
 
-    // Free the reserved address using stored aligned_size
-    CURESULT_CHECK(hipMemAddressFree((hipDeviceptr_t)ptr, metadata.aligned_size));
-
-#ifdef TMS_DEBUG_LOG
-    std::cout << "[torch_memory_saver.cpp] TorchMemorySaver.cuda_free "
-              << " ptr=" << ptr << " metadata.size=" << metadata.size
-              << " metadata.aligned_size=" << metadata.aligned_size
-              << " num_chunks=" << metadata.allocHandles.size()
-              << std::endl;
-#endif
 #elif defined(USE_CUDA)
     AllocationMetadata metadata;
     {
@@ -189,30 +124,14 @@ void TorchMemorySaver::pause(const std::string& tag) {
         if (!tag.empty() && metadata.tag != tag) {
             continue;
         }
-        // Copy CUDA's code supporting cpu_backup to here
-        if (metadata.enable_cpu_backup) {
-            if (nullptr == metadata.cpu_backup) {
-                CUDA_ERROR_CHECK(hipMallocHost(&metadata.cpu_backup, metadata.aligned_size));
-            }
-            SIMPLE_CHECK(metadata.cpu_backup != nullptr, "cpu_backup should not be nullptr");
-            // TODO may use cudaMemcpyAsync if needed
-            CUDA_ERROR_CHECK(cudaMemcpy(metadata.cpu_backup, ptr, metadata.aligned_size, hipMemcpyDeviceToHost));
-        }
-        //
 
-        // Unmap and release chunks (but keep metadata for resume)
-        // CUDAUtils::cu_mem_unmap_and_release(metadata.device, metadata.size,
-        CUDAUtils::cu_mem_unmap_and_release(metadata.device, metadata.aligned_size,
-                                            (hipDeviceptr_t)ptr, metadata.allocHandles, metadata.chunk_sizes);
-
-        #ifdef TMS_DEBUG_LOG
-            std::cout << "[torch_memory_saver.cpp] TorchMemorySaver.pause"
-                    << " ptr=" << ptr << " metadata.size=" << metadata.size 
-                    << " metadata.aligned_size=" << metadata.aligned_size
-                    << " num_chunks=" << metadata.allocHandles.size()
-                    << std::endl;
-        #endif
+        ROCmHIPImplementation::rocm_pause(
+            ptr, metadata.size, metadata.aligned_size, metadata.device,
+            metadata.enable_cpu_backup, metadata.cpu_backup,
+            metadata.allocHandles, metadata.chunk_sizes
+        );
     }
+
 #elif defined(USE_CUDA)
     for (auto it = allocation_metadata_.begin(); it != allocation_metadata_.end(); ++it) {
         void *ptr = it->first;
@@ -235,7 +154,6 @@ void TorchMemorySaver::pause(const std::string& tag) {
                 CUDA_ERROR_CHECK(cudaMallocHost(&metadata.cpu_backup, metadata.size));
             }
             SIMPLE_CHECK(metadata.cpu_backup != nullptr, "cpu_backup should not be nullptr");
-            // TODO may use cudaMemcpyAsync if needed
             CUDA_ERROR_CHECK(cudaMemcpy(metadata.cpu_backup, ptr, metadata.size, cudaMemcpyDeviceToHost));
         }
 
@@ -269,26 +187,11 @@ void TorchMemorySaver::resume(const std::string& tag) {
             continue;
         }
 
-        // Create new handles and map chunks
-        // CUDAUtils::cu_mem_create_and_map(metadata.device, metadata.size,
-        CUDAUtils::cu_mem_create_and_map(metadata.device, metadata.aligned_size,
-                                        (hipDeviceptr_t)ptr, metadata.allocHandles, metadata.chunk_sizes);
-
-        // Restore from CPU backup if enabled
-        if (metadata.enable_cpu_backup) {
-            SIMPLE_CHECK(metadata.cpu_backup != nullptr, "cpu_backup should not be nullptr");
-            // TODO may use cudaMemcpyAsync if needed
-            CUDA_ERROR_CHECK(cudaMemcpy(ptr, metadata.cpu_backup, metadata.aligned_size, hipMemcpyHostToDevice));
-            // maybe we can free host memory if needed (currently keep it there to reduce re-alloc time)
-        }
-
-#ifdef TMS_DEBUG_LOG
-        std::cout << "[torch_memory_saver.cpp] TorchMemorySaver.resume"
-                << " ptr=" << ptr << " metadata.size=" << metadata.size
-                << " metadata.aligned_size=" << metadata.aligned_size
-                << " num_chunks=" << metadata.allocHandles.size()
-                << std::endl;
-#endif
+        ROCmHIPImplementation::rocm_resume(
+            ptr, metadata.size, metadata.aligned_size, metadata.device,
+            metadata.enable_cpu_backup, metadata.cpu_backup,
+            metadata.allocHandles, metadata.chunk_sizes
+        );
     }
 
 #elif defined(USE_CUDA)
@@ -317,9 +220,7 @@ void TorchMemorySaver::resume(const std::string& tag) {
 
         if (metadata.enable_cpu_backup) {
             SIMPLE_CHECK(metadata.cpu_backup != nullptr, "cpu_backup should not be nullptr");
-            // TODO may use cudaMemcpyAsync if needed
             CUDA_ERROR_CHECK(cudaMemcpy(ptr, metadata.cpu_backup, metadata.size, cudaMemcpyHostToDevice));
-            // maybe we can free host memory if needed (currently keep it there to reduce re-alloc time)
         }
 
 #ifdef TMS_DEBUG_LOG

@@ -7,6 +7,10 @@
 #include "utils.h"
 #include "macro.h"
 
+#if defined(USE_ROCM)
+#include "hardware_amd_support.h"
+#endif
+
 enum class AllocationState {
     // Memory is mapped and accessible
     ACTIVE,
@@ -32,48 +36,6 @@ struct AllocationMetadata {
     #error "USE_PLATFORM is not set"
 #endif
 };
-
-#if defined(USE_ROCM)
-namespace DeviceUtils {
-    // Simple function to get global device ID from local device ID
-    static int get_global_device_id(hipDevice_t local_device_id) {
-        // Check for HIP_VISIBLE_DEVICES environment variable
-        const char* hip_visible = std::getenv("HIP_VISIBLE_DEVICES");
-        
-        if (hip_visible && strlen(hip_visible) > 0) {
-            std::string devices_str(hip_visible);
-            std::stringstream ss(devices_str);
-            std::string device_str;
-            std::vector<int> device_list;
-            
-            // Parse comma-separated device list
-            while (std::getline(ss, device_str, ',')) {
-                if (!device_str.empty()) {
-                    device_list.push_back(std::atoi(device_str.c_str()));
-                }
-            }
-            
-            if (local_device_id < device_list.size()) {
-                int global_device_id = device_list[local_device_id];
-#ifdef TMS_DEBUG_LOG
-                std::cout << "[torch_memory_saver.cpp] HIP_VISIBLE_DEVICES=" << hip_visible 
-                        << " local_device_id=" << local_device_id 
-                        << " -> global_device_id=" << global_device_id << std::endl;
-#endif
-                return global_device_id;
-            }
-        }
-        
-        // Fallback: return local device ID as-is
-#ifdef TMS_DEBUG_LOG
-        std::cout << "[torch_memory_saver.cpp] No HIP_VISIBLE_DEVICES, using local_device_id=" << local_device_id << std::endl;
-#endif
-        return local_device_id;
-    }
-}
-#endif 
-
-
 
 class TorchMemorySaver {
 public:
