@@ -16,25 +16,6 @@ TorchMemorySaver &TorchMemorySaver::instance() {
 
 cudaError_t TorchMemorySaver::malloc(void **ptr, CUdevice device, size_t size, const std::string& tag, const bool enable_cpu_backup) {
 #if defined(USE_ROCM)
-    // AllocationMetadata metadata;
-    // metadata.size = size;
-    // metadata.device = device;
-    // metadata.tag = tag;
-    // metadata.state = AllocationState::ACTIVE;
-    // metadata.enable_cpu_backup = enable_cpu_backup;
-    // metadata.cpu_backup = nullptr;
-
-    // cudaError_t result = ROCmHIPImplementation::rocm_malloc(
-    //     ptr, device, size, tag, enable_cpu_backup,
-    //     metadata.aligned_size, metadata.allocHandles, metadata.chunk_sizes
-    // );
-
-    // if (result == cudaSuccess) {
-    //     const std::lock_guard<std::mutex> lock(allocator_metadata_mutex_);
-    //     allocation_metadata_.emplace(*ptr, std::move(metadata));
-    // }
-
-    // return result;
     return ROCmHIPImplementation::rocm_malloc(ptr, device, size, tag, enable_cpu_backup, allocation_metadata_, allocator_metadata_mutex_);
 
 #elif defined(USE_CUDA)
@@ -67,18 +48,6 @@ cudaError_t TorchMemorySaver::malloc(void **ptr, CUdevice device, size_t size, c
 
 cudaError_t TorchMemorySaver::free(void *ptr) {
 #if defined(USE_ROCM)
-    // AllocationMetadata metadata;
-    // {
-    //     const std::lock_guard<std::mutex> lock(allocator_metadata_mutex_);
-    //     SIMPLE_CHECK(allocation_metadata_.count(ptr), "Trying to free a pointer not allocated here");
-    //     metadata = std::move(allocation_metadata_[ptr]);
-    //     allocation_metadata_.erase(ptr);
-    // }
-
-    // return ROCmHIPImplementation::rocm_free(
-    //     ptr, metadata.size, metadata.aligned_size, metadata.device,
-    //     metadata.allocHandles, metadata.chunk_sizes
-    // );
     return ROCmHIPImplementation::rocm_free(ptr, allocation_metadata_, allocator_metadata_mutex_);
 
 #elif defined(USE_CUDA)
@@ -117,20 +86,6 @@ cudaError_t TorchMemorySaver::free(void *ptr) {
 
 void TorchMemorySaver::pause(const std::string& tag) {
 #if defined(USE_ROCM)
-    // for (auto it = allocation_metadata_.begin(); it != allocation_metadata_.end(); ++it) {
-    //     void *ptr = it->first;
-    //     AllocationMetadata &metadata = it->second;
-
-    //     if (!tag.empty() && metadata.tag != tag) {
-    //         continue;
-    //     }
-
-    //     ROCmHIPImplementation::rocm_pause(
-    //         ptr, metadata.size, metadata.aligned_size, metadata.device,
-    //         metadata.enable_cpu_backup, metadata.cpu_backup,
-    //         metadata.allocHandles, metadata.chunk_sizes
-    //     );
-    // }
     ROCmHIPImplementation::rocm_pause(tag, allocation_metadata_, allocator_metadata_mutex_);
 
 #elif defined(USE_CUDA)
@@ -181,20 +136,6 @@ void TorchMemorySaver::pause(const std::string& tag) {
 
 void TorchMemorySaver::resume(const std::string& tag) {
 #if defined(USE_ROCM)
-    // for (auto it = allocation_metadata_.begin(); it != allocation_metadata_.end(); ++it) {
-    //     void *ptr = it->first;
-    //     AllocationMetadata &metadata = it->second;
-
-    //     if (!tag.empty() && metadata.tag != tag) {
-    //         continue;
-    //     }
-
-    //     ROCmHIPImplementation::rocm_resume(
-    //         ptr, metadata.size, metadata.aligned_size, metadata.device,
-    //         metadata.enable_cpu_backup, metadata.cpu_backup,
-    //         metadata.allocHandles, metadata.chunk_sizes
-    //     );
-    // }
     ROCmHIPImplementation::rocm_resume(tag, allocation_metadata_, allocator_metadata_mutex_);
 
 #elif defined(USE_CUDA)
