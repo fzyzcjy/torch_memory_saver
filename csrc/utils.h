@@ -57,11 +57,11 @@
 namespace CUDAUtils {
 #if defined(USE_ROCM)
 
-    #if HIP_VERSION >= 60402000 // rocm/hip 6.4.2
-        #pragma message "Using ROCm/HIP 6.4.2+ implementation"
-        // Implement when rocm release >= 6.4.2 version
+    #if HIP_VERSION < 60304000 // rocm/hip 6.3.4
+        #pragma message "You need to implement torch_memory_saver in ROCm/HIP 6.3.4 or lower. We did not support it currently."
     #else
-        #pragma message "Using ROCm/HIP < 6.4.2 implementation"
+        // After rocm-7.0, we can use the same way to implement torch_memory_saver as CUDA side. --> Need to verify
+        #pragma message "Using ROCm/HIP >= 6.4.2 implementation"
         // hipMemCreate currently has issue in rocm-6.3.4. After it is fixed in rocm-7.0, we can use the same way to implement torch_memory_saver as CUDA side.
         // Current, we based on the chuck-wise method to implement it.
         static void cu_mem_create_and_map(hipDevice_t device, 
