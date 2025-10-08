@@ -8,6 +8,8 @@
 #include <hip/hip_runtime.h>
 #include <sstream>
 #include <cstdlib>
+#include <cstring>
+#include <cassert> 
 // Define a general alias
 #define CUresult hipError_t
 #define cudaError_t hipError_t
@@ -20,7 +22,6 @@
 #define cudaMallocHost hipHostMalloc
 #define cudaMemcpy hipMemcpy
 #define cudaMemcpyDeviceToHost hipMemcpyDeviceToHost
-#define cuGetErrorString hipDrvGetErrorString
 #define cudaGetErrorString hipGetErrorString   
 #define cuMemUnmap hipMemUnmap
 #define cuMemRelease hipMemRelease

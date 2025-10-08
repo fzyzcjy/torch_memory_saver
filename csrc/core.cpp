@@ -274,6 +274,14 @@ void TorchMemorySaver::resume(const std::string& tag) {
         CUDAUtils::cu_mem_create_and_map(metadata.device, metadata.aligned_size,
                                         (hipDeviceptr_t)ptr, metadata.allocHandles, metadata.chunk_sizes);
 
+        // Restore from CPU backup if enabled
+        if (metadata.enable_cpu_backup) {
+            SIMPLE_CHECK(metadata.cpu_backup != nullptr, "cpu_backup should not be nullptr");
+            // TODO may use cudaMemcpyAsync if needed
+            CUDA_ERROR_CHECK(cudaMemcpy(ptr, metadata.cpu_backup, metadata.aligned_size, hipMemcpyHostToDevice));
+            // maybe we can free host memory if needed (currently keep it there to reduce re-alloc time)
+        }
+
 #ifdef TMS_DEBUG_LOG
         std::cout << "[torch_memory_saver.cpp] TorchMemorySaver.resume"
                 << " ptr=" << ptr << " metadata.size=" << metadata.size

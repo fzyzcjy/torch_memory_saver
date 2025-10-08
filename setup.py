@@ -96,6 +96,7 @@ def _create_ext_modules(platform):
         library_dirs = [str(platform_home.resolve() / 'lib')]
         libraries = ['amdhip64', 'dl']
         platform_macros = [('USE_ROCM', '1')]
+        extra_compile_args = ['-std=c++17', '-O3']
     else:  # cuda
         include_dirs = [str((platform_home / 'include').resolve())]
         library_dirs = [
