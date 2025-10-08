@@ -12,10 +12,14 @@ def run(hook_mode: str):
     torch_memory_saver.hook_mode = hook_mode
     logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
 
-    normal_tensor = torch.full((1_000_000_0,), 100, dtype=torch.uint8, device='cuda')
+    normal_tensor = torch.full((1_000_000,), 100, dtype=torch.uint8, device='cuda')
+    # Currently AMD - ROCm Implementation require the below tensor size
+    # normal_tensor = torch.full((1_000_000_0,), 100, dtype=torch.uint8, device='cuda')
 
     with torch_memory_saver.region():
-        pauseable_tensor = torch.full((1_000_000_000_0,), 100, dtype=torch.uint8, device='cuda')
+        pauseable_tensor = torch.full((1_000_000_000,), 100, dtype=torch.uint8, device='cuda')
+        # Currently AMD - ROCm Implementation require the below tensor size
+        # pauseable_tensor = torch.full((1_000_000_000_0,), 100, dtype=torch.uint8, device='cuda')
 
     original_address = pauseable_tensor.data_ptr()
     print(f"Pauseable tensor virtual address: 0x{original_address:x}")
