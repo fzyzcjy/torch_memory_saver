@@ -154,6 +154,7 @@ void TorchMemorySaver::pause(const std::string& tag) {
                 CUDA_ERROR_CHECK(cudaMallocHost(&metadata.cpu_backup, metadata.size));
             }
             SIMPLE_CHECK(metadata.cpu_backup != nullptr, "cpu_backup should not be nullptr");
+            // TODO may use cudaMemcpyAsync if needed
             CUDA_ERROR_CHECK(cudaMemcpy(metadata.cpu_backup, ptr, metadata.size, cudaMemcpyDeviceToHost));
         }
 
@@ -219,8 +220,10 @@ void TorchMemorySaver::resume(const std::string& tag) {
         CUDAUtils::cu_mem_set_access(ptr, metadata.size, metadata.device);
 
         if (metadata.enable_cpu_backup) {
+            // TODO may use cudaMemcpyAsync if needed
             SIMPLE_CHECK(metadata.cpu_backup != nullptr, "cpu_backup should not be nullptr");
             CUDA_ERROR_CHECK(cudaMemcpy(ptr, metadata.cpu_backup, metadata.size, cudaMemcpyHostToDevice));
+            // maybe we can free host memory if needed (currently keep it there to reduce re-alloc time)
         }
 
 #ifdef TMS_DEBUG_LOG
