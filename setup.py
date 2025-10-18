@@ -151,7 +151,7 @@ class build_ext_for_platform(build_platform_ext):
 
 setup(
     name='torch_memory_saver',
-    version='0.0.9rc3',
+    version='0.0.9',
     ext_modules=ext_modules,
     cmdclass={'build_ext': build_ext_for_platform},
     python_requires=">=3.9",
