@@ -179,7 +179,7 @@ namespace CUDAUtils {
     #endif
 
 #elif defined(USE_CUDA)
-    static void cu_mem_create(CUmemGenericAllocationHandle *alloc_handle, size_t size, CUdevice device) {
+    static cudaError_t cu_mem_create(CUmemGenericAllocationHandle *alloc_handle, size_t size, CUdevice device) {
         CUmemAllocationProp prop = {};
         prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
         prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
@@ -191,7 +191,14 @@ namespace CUDAUtils {
             prop.allocFlags.gpuDirectRDMACapable = 1;
         }
 
-        CURESULT_CHECK(cuMemCreate(alloc_handle, size, &prop, 0));
+        CUresult ret = cuMemCreate(alloc_handle, size, &prop, 0);
+        if (ret == CUDA_ERROR_OUT_OF_MEMORY) {
+            std::cerr << "[torch_memory_saver.cpp] cu_mem_create has CUDA_ERROR_OUT_OF_MEMORY" << std::endl;
+            return cudaErrorMemoryAllocation;
+        }
+        CURESULT_CHECK(ret);
+
+        return cudaSuccess;
     }
 
     static void cu_mem_set_access(void *ptr, size_t size, CUdevice device) {
