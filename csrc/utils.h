@@ -194,7 +194,7 @@ namespace CUDAUtils {
         CUresult ret = cuMemCreate(alloc_handle, size, &prop, 0);
         if (ret == CUDA_ERROR_OUT_OF_MEMORY) {
             std::cerr << "[torch_memory_saver.cpp] cu_mem_create has error: " \
-                      << "return_code=" << ret << << std::endl;
+                      << "return_code=" << ret << std::endl;
             return cudaErrorMemoryAllocation;
         }
         CURESULT_CHECK(ret);
