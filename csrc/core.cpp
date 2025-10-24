@@ -20,7 +20,12 @@ cudaError_t TorchMemorySaver::malloc(void **ptr, CUdevice device, size_t size, c
 
 #elif defined(USE_CUDA)
     CUmemGenericAllocationHandle allocHandle;
-    CUDAUtils::cu_mem_create(&allocHandle, size, device);
+
+    cudaError_t ret = CUDAUtils::cu_mem_create(&allocHandle, size, device);
+    if (ret != cudaSuccess) {
+        return ret;
+    }
+
     CURESULT_CHECK(cuMemAddressReserve((CUdeviceptr *) ptr, size, 0, 0, 0));
     CURESULT_CHECK(cuMemMap((CUdeviceptr) * ptr, size, 0, allocHandle, 0));
     CUDAUtils::cu_mem_set_access(*ptr, size, device);
@@ -158,7 +163,7 @@ void TorchMemorySaver::resume(const std::string& tag) {
         }
 
         CUmemGenericAllocationHandle newAllocHandle;
-        CUDAUtils::cu_mem_create(&newAllocHandle, metadata.size, metadata.device);
+        CUDA_ERROR_CHECK(CUDAUtils::cu_mem_create(&newAllocHandle, metadata.size, metadata.device));
 
         CURESULT_CHECK(cuMemMap((CUdeviceptr) ptr, metadata.size, 0, newAllocHandle, 0));
 

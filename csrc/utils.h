@@ -191,7 +191,13 @@ namespace CUDAUtils {
             prop.allocFlags.gpuDirectRDMACapable = 1;
         }
 
-        CURESULT_CHECK(cuMemCreate(alloc_handle, size, &prop, 0));
+        CUresult ret = cuMemCreate(alloc_handle, size, &prop, 0);
+        if (ret == CUDA_ERROR_OUT_OF_MEMORY) {
+            std::cerr << "[torch_memory_saver.cpp] cu_mem_create has error: " \
+                      << "return_code=" << ret << << std::endl;
+            return cudaErrorMemoryAllocation;
+        }
+        CURESULT_CHECK(ret);
     }
 
     static void cu_mem_set_access(void *ptr, size_t size, CUdevice device) {
