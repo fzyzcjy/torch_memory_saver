@@ -67,6 +67,8 @@ cudaError_t TorchMemorySaver::free(void *ptr) {
         allocation_metadata_.erase(ptr);
     }
 
+    CUDA_ERROR_CHECK(cudaDeviceSynchronize());
+
     CURESULT_CHECK(cuMemUnmap((CUdeviceptr) ptr, metadata.size));
     CURESULT_CHECK(cuMemRelease(metadata.allocHandle));
     CURESULT_CHECK(cuMemAddressFree((CUdeviceptr) ptr, metadata.size));
