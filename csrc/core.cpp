@@ -39,7 +39,7 @@ cudaError_t TorchMemorySaver::malloc(void **ptr, CUdevice device, size_t size, c
     }
 
 #ifdef TMS_DEBUG_LOG
-    std::cout << "[torch_memory_saver.cpp] TorchMemorySaver.cuda_malloc "
+    std::cout << "[torch_memory_saver.cpp] TorchMemorySaver.malloc "
               << " ptr=" << ptr << " *ptr=" << *ptr << " size=" << size
               << " allocHandle=" << allocHandle << " tag=" << tag
               << std::endl;
@@ -77,7 +77,7 @@ cudaError_t TorchMemorySaver::free(void *ptr) {
     }
 
 #ifdef TMS_DEBUG_LOG
-    std::cout << "[torch_memory_saver.cpp] TorchMemorySaver.cuda_free "
+    std::cout << "[torch_memory_saver.cpp] TorchMemorySaver.free "
               << " ptr=" << ptr << " metadata.size=" << metadata.size
               << " metadata.allocHandle=" << metadata.allocHandle << " tag=" << metadata.tag
               << std::endl;

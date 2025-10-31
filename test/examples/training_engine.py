@@ -61,6 +61,22 @@ def run(hook_mode: str):
     mem_after_second_forward_pass = get_and_print_gpu_memory("After second forward pass")
     assert mem_after_resume - 1024 ** 2 < mem_after_second_forward_pass < mem_after_resume + 1024 ** 2
 
+    # simulate cache eviction
+    # NOTE: here we assume
+    _, total_mem = torch.cuda.mem_get_info()
+    print(f"Total memory: {total_mem / 1e9}GB")
+    a = torch.full((int(total_mem * 0.3),), 42, dtype=torch.uint8, device='cuda')
+    get_and_print_gpu_memory("[cache-eviction-test] after alloc a")
+    b = torch.full((int(total_mem * 0.3),), 42, dtype=torch.uint8, device='cuda')
+    get_and_print_gpu_memory("[cache-eviction-test] after alloc b")
+    del a, b
+    get_and_print_gpu_memory("[cache-eviction-test] after del a,b")
+    c = torch.full((int(total_mem * 0.6),), 42, dtype=torch.uint8, device='cuda')
+    get_and_print_gpu_memory("[cache-eviction-test] after alloc c")
+    initial_tensor += 1
+    assert (initial_tensor.max() == 43) and (initial_tensor.min() == 43)
+    get_and_print_gpu_memory("[cache-eviction-test] after using other tensors")
+
     del initial_tensor
 
 

@@ -63,7 +63,7 @@ cudaError_t cudaFree(void *ptr) {
 extern "C" {
 void *tms_torch_malloc(ssize_t size, int device, cudaStream_t stream) {
 #ifdef TMS_DEBUG_LOG
-    std::cout << "[torch_memory_saver.cpp] tms_torch_malloc "
+    std::cout << "[torch_memory_saver.cpp] entrypoint::tms_torch_malloc "
               << " size=" << size << " device=" << device << " stream=" << stream
               << std::endl;
 #endif
@@ -76,7 +76,7 @@ void *tms_torch_malloc(ssize_t size, int device, cudaStream_t stream) {
 
 void tms_torch_free(void *ptr, ssize_t ssize, int device, cudaStream_t stream) {
 #ifdef TMS_DEBUG_LOG
-    std::cout << "[torch_memory_saver.cpp] tms_torch_free "
+    std::cout << "[torch_memory_saver.cpp] entrypoint::tms_torch_free "
               << " ptr=" << ptr << " ssize=" << ssize << " device=" << device << " stream=" << stream
               << std::endl;
 #endif

@@ -26,7 +26,7 @@ namespace APIForwarder {
         cudaError_t ret = real_cuda_malloc_(ptr, size);
 
 #ifdef TMS_DEBUG_LOG
-        std::cout << "[torch_memory_saver.cpp] cudaMalloc [MODE NORMAL]"
+        std::cout << "[torch_memory_saver.cpp] APIForwarder.call_real_cuda_malloc "
                   << " ptr=" << ptr << " *ptr=" << *ptr << " size=" << size << " ret=" << ret
                   << std::endl;
 #endif
@@ -42,7 +42,7 @@ namespace APIForwarder {
         cudaError_t ret = real_cuda_free_(ptr);
 
 #ifdef TMS_DEBUG_LOG
-        std::cout << "[torch_memory_saver.cpp] cudaFree [MODE NORMAL]"
+        std::cout << "[torch_memory_saver.cpp] APIForwarder.call_real_cuda_free "
                   << " ptr=" << ptr << " ret=" << ret
                   << std::endl;
 #endif
