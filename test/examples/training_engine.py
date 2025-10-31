@@ -74,7 +74,7 @@ def run(hook_mode: str):
     c = torch.full((int(total_mem * 0.6),), 42, dtype=torch.uint8, device='cuda')
     get_and_print_gpu_memory("[cache-eviction-test] after alloc c")
     initial_tensor += 1
-    assert initial_tensor.mean() == 42.0
+    assert (initial_tensor.max() == 43) and (initial_tensor.min() == 43)
     get_and_print_gpu_memory("[cache-eviction-test] after using other tensors")
 
     del initial_tensor
