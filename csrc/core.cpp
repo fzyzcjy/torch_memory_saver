@@ -23,7 +23,7 @@ cudaError_t TorchMemorySaver::malloc(void **ptr, CUdevice device, size_t size, c
     if (memory_margin_bytes > 0) {
         size_t free_bytes, total_bytes;
         CUDA_ERROR_CHECK(cudaMemGetInfo(&free_bytes, &total_bytes));
-        if (memory_margin_bytes + size < free_bytes) {
+        if (memory_margin_bytes + size > free_bytes) {
             std::cout << "[torch_memory_saver.cpp] TorchMemorySaver::malloc return OOM since"
                 << " memory_margin_bytes=" << memory_margin_bytes
                 << " (alloc)size=" << size
