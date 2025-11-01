@@ -71,6 +71,15 @@ class TorchMemorySaver:
         assert self._impl_ctor_kwargs is not None, "Cannot configure after initialization"
         self._impl_ctor_kwargs["hook_mode"] = hook_mode
 
+    @property
+    def memory_margin_bytes(self):
+        raise NotImplementedError("Only setter is supported")
+
+    @memory_margin_bytes.setter
+    def memory_margin_bytes(self, value: int):
+        self._ensure_initialized()
+        self._impl._binary_wrapper.cdll.set_memory_margin_bytes(value)
+
     def _ensure_initialized(self):
         if self._impl is not None:
             return
