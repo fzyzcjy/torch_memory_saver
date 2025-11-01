@@ -110,6 +110,10 @@ void tms_set_enable_cpu_backup(bool enable_cpu_backup) {
     thread_local_config.set_enable_cpu_backup(enable_cpu_backup);
 }
 
+void set_memory_margin_bytes(uint64_t value) {
+    TorchMemorySaver::instance().set_memory_margin_bytes(value);
+}
+
 void tms_pause(const char* tag) {
     std::string tag_str = (tag != nullptr) ? std::string(tag) : "";
     TorchMemorySaver::instance().pause(tag_str);

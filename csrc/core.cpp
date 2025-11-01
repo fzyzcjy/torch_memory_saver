@@ -19,6 +19,20 @@ cudaError_t TorchMemorySaver::malloc(void **ptr, CUdevice device, size_t size, c
     return ROCmHIPImplementation::rocm_malloc(ptr, device, size, tag, enable_cpu_backup, allocation_metadata_, allocator_metadata_mutex_);
 
 #elif defined(USE_CUDA)
+    const uint64_t memory_margin_bytes = memory_margin_bytes_.load();
+    if (memory_margin_bytes > 0) {
+        size_t free_bytes, total_bytes;
+        CUDA_ERROR_CHECK(cudaMemGetInfo(&free_bytes, &total_bytes));
+        if (memory_margin_bytes + size > free_bytes) {
+            std::cout << "[torch_memory_saver.cpp] TorchMemorySaver::malloc return OOM since"
+                << " memory_margin_bytes=" << memory_margin_bytes
+                << " (alloc)size=" << size
+                << " free_bytes=" << free_bytes
+                << std::endl;
+            return cudaErrorMemoryAllocation;
+        }
+    }
+
     CUmemGenericAllocationHandle allocHandle;
 
     cudaError_t ret = CUDAUtils::cu_mem_create(&allocHandle, size, device);

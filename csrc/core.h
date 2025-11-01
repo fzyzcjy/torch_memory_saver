@@ -2,6 +2,7 @@
 #include <sys/types.h>
 #include <stdio.h>
 #include <unordered_map>
+#include <atomic>
 #include <mutex>
 #include <string>
 #include "utils.h"
@@ -46,6 +47,9 @@ public:
 
     void pause(const std::string& tag);
     void resume(const std::string& tag);
+    void set_memory_margin_bytes(uint64_t value) {
+        memory_margin_bytes_.store(value);
+    }
 
 private:
     TorchMemorySaver();
@@ -55,4 +59,5 @@ private:
 
     std::mutex allocator_metadata_mutex_;
     std::unordered_map<void*, AllocationMetadata> allocation_metadata_;
+    std::atomic<uint64_t> memory_margin_bytes_ = 0;
 };

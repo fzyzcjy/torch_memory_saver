@@ -29,3 +29,4 @@ def _setup_function_signatures(cdll):
     cdll.tms_get_enable_cpu_backup.restype = ctypes.c_bool
     cdll.tms_pause.argtypes = [ctypes.c_char_p]
     cdll.tms_resume.argtypes = [ctypes.c_char_p]
+    cdll.set_memory_margin_bytes.argtypes = [ctypes.c_uint64]
