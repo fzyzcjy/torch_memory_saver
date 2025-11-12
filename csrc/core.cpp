@@ -189,7 +189,11 @@ void TorchMemorySaver::resume(const std::string& tag) {
             SIMPLE_CHECK(metadata.cpu_backup != nullptr, "cpu_backup should not be nullptr");
             // TODO may use cudaMemcpyAsync if needed
             CUDA_ERROR_CHECK(cudaMemcpy(ptr, metadata.cpu_backup, metadata.size, cudaMemcpyHostToDevice));
-            // maybe we can free host memory if needed (currently keep it there to reduce re-alloc time)
+
+            // TODO may provide a flag to choose whether to free immediately
+            // (users may want to lazily free to reduce re-alloc time)
+            CUDA_ERROR_CHECK(cudaFreeHost(metadata.cpu_backup));
+            metadata.cpu_backup = nullptr;
         }
 
 #ifdef TMS_DEBUG_LOG
