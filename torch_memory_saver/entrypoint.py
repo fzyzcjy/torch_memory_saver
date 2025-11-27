@@ -166,9 +166,10 @@ class _TorchMemorySaverImpl:
 
         ans = TODO
 
-        assert ans.dtype == x.dtype
-        assert ans.shape == x.shape
-        assert ans.stride() == x.stride()
+        assert ans.device == torch.device("cpu"), f"{ans.device=}"
+        assert ans.dtype == x.dtype, f"{ans.dtype=} {x.dtype=}"
+        assert ans.shape == x.shape, f"{ans.shape=} {x.shape=}"
+        assert ans.stride() == x.stride(), f"{ans.stride()=} {x.stride()=}"
         return ans
 
 def _sanity_checks():
