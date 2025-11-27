@@ -80,6 +80,10 @@ class TorchMemorySaver:
         self._ensure_initialized()
         self._impl._binary_wrapper.cdll.set_memory_margin_bytes(value)
 
+    def get_cpu_backup(self, x: torch.Tensor):
+        self._ensure_initialized()
+        return self._impl.get_cpu_backup(x)
+
     def _ensure_initialized(self):
         if self._impl is not None:
             return
@@ -147,6 +151,10 @@ class _TorchMemorySaverImpl:
         tag_bytes = tag.encode("utf-8") if tag else None
         self._binary_wrapper.cdll.tms_resume(tag_bytes)
 
+    def get_cpu_backup(self, x: torch.Tensor):
+        assert x.is_cuda, f"{x.device=}"
+        assert x.is_contiguous(), f"{x.shape=} {x.stride()=} {x.dtype=}"
+        return TODO
 
 def _sanity_checks():
     if "expandable_segments:True" in os.environ.get("PYTORCH_CUDA_ALLOC_CONF", ""):
