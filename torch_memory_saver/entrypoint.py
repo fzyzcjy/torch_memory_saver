@@ -161,10 +161,11 @@ class _TorchMemorySaverImpl:
         cpu_untyped_ptr = self._binary_wrapper.cdll.tms_get_cpu_backup_pointer(x.data_ptr(), nbytes)
 
         cpu_u8_ptr = ctypes.cast(cpu_untyped_ptr, ctypes.POINTER(ctypes.c_uint8))
-        np_arr = np.ctypeslib.as_array(cpu_u8_ptr, shape=(nbytes,))
-        assert np_arr.dtype == np.uint8, f"{np_arr.dtype=} {np_arr.shape=}"
+        np_untyped = np.ctypeslib.as_array(cpu_u8_ptr, shape=(nbytes,))
+        assert np_untyped.dtype == np.uint8, f"{np_untyped.dtype=} {np_untyped.shape=}"
 
-        ans = TODO
+        ans_untyped = torch.from_numpy(np_untyped)
+        ans = ans_untyped.view(x.dtype).view(x.shape)
 
         assert ans.device == torch.device("cpu"), f"{ans.device=}"
         assert ans.dtype == x.dtype, f"{ans.dtype=} {x.dtype=}"
