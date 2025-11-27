@@ -1,4 +1,6 @@
 import ctypes
+
+import numpy as np
 import logging
 import os
 from collections import defaultdict
@@ -80,6 +82,10 @@ class TorchMemorySaver:
         self._ensure_initialized()
         self._impl._binary_wrapper.cdll.set_memory_margin_bytes(value)
 
+    def get_cpu_backup(self, x: torch.Tensor):
+        self._ensure_initialized()
+        return self._impl.get_cpu_backup(x)
+
     def _ensure_initialized(self):
         if self._impl is not None:
             return
@@ -147,6 +153,30 @@ class _TorchMemorySaverImpl:
         tag_bytes = tag.encode("utf-8") if tag else None
         self._binary_wrapper.cdll.tms_resume(tag_bytes)
 
+    def get_cpu_backup(self, x: torch.Tensor):
+        assert x.is_cuda, f"{x.device=}"
+        assert x.is_contiguous(), f"{x.shape=} {x.stride()=} {x.dtype=}"
+
+        nbytes = x.nbytes
+        gpu_ptr = ctypes.cast(x.data_ptr(), ctypes.POINTER(ctypes.c_uint8))
+        cpu_ptr = self._binary_wrapper.cdll.tms_get_cpu_backup_pointer(gpu_ptr, nbytes)
+        if not cpu_ptr:
+            return None
+
+        np_untyped = np.ctypeslib.as_array(cpu_ptr, shape=(nbytes,))
+        assert np_untyped.dtype == np.uint8, f"{np_untyped.dtype=} {np_untyped.shape=}"
+
+        ans_untyped = torch.from_numpy(np_untyped)
+        ans = ans_untyped.view(x.dtype).view(x.shape)
+
+        # For simplicity and safety
+        ans = ans.clone()
+
+        assert ans.device == torch.device("cpu"), f"{ans.device=}"
+        assert ans.dtype == x.dtype, f"{ans.dtype=} {x.dtype=}"
+        assert ans.shape == x.shape, f"{ans.shape=} {x.shape=}"
+        assert ans.stride() == x.stride(), f"{ans.stride()=} {x.stride()=}"
+        return ans
 
 def _sanity_checks():
     if "expandable_segments:True" in os.environ.get("PYTORCH_CUDA_ALLOC_CONF", ""):
