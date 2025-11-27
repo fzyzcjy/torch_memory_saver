@@ -232,7 +232,7 @@ void* TorchMemorySaver::get_cpu_backup_pointer(const void* query_gpu_ptr, uint64
     }
 
     std::cerr << "[torch_memory_saver.cpp] get_cpu_backup_pointer fail to find backup "
-              << " gpu_ptr=" << gpu_ptr << " size=" << size
+              << " query_gpu_ptr=" << query_gpu_ptr << " query_size=" << query_size
               << std::endl;
     exit(1);
 #else
