@@ -167,6 +167,9 @@ class _TorchMemorySaverImpl:
         ans_untyped = torch.from_numpy(np_untyped)
         ans = ans_untyped.view(x.dtype).view(x.shape)
 
+        # For simplicity and safety
+        ans = ans.clone()
+
         assert ans.device == torch.device("cpu"), f"{ans.device=}"
         assert ans.dtype == x.dtype, f"{ans.dtype=} {x.dtype=}"
         assert ans.shape == x.shape, f"{ans.shape=} {x.shape=}"
