@@ -124,7 +124,7 @@ void tms_resume(const char* tag) {
     TorchMemorySaver::instance().resume(tag_str);
 }
 
-void* tms_get_cpu_backup_pointer(const void* gpu_ptr, uint64_t size) {
+uint8_t* tms_get_cpu_backup_pointer(const uint8_t* gpu_ptr, uint64_t size) {
     return TorchMemorySaver::instance().get_cpu_backup_pointer(gpu_ptr, size);
 }
 }

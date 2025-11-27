@@ -213,7 +213,7 @@ void TorchMemorySaver::resume(const std::string& tag) {
 #endif
 }
 
-void* TorchMemorySaver::get_cpu_backup_pointer(const void* query_gpu_ptr, uint64_t query_size) {
+uint8_t* TorchMemorySaver::get_cpu_backup_pointer(const uint8_t* query_gpu_ptr, uint64_t query_size) {
 #if defined(USE_ROCM)
     exit(1); // unsupported
 
@@ -221,7 +221,7 @@ void* TorchMemorySaver::get_cpu_backup_pointer(const void* query_gpu_ptr, uint64
     const std::lock_guard <std::mutex> lock(allocator_metadata_mutex_);
 
     for (auto it = allocation_metadata_.begin(); it != allocation_metadata_.end(); ++it) {
-        void *ptr = it->first;
+        uint8_t *ptr = (uint8_t*) it->first;
         AllocationMetadata &metadata = it->second;
 
         if ((ptr <= query_gpu_ptr) && (query_gpu_ptr + query_size <= ptr + metadata.size)) {

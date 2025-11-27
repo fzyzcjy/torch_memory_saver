@@ -158,10 +158,9 @@ class _TorchMemorySaverImpl:
         assert x.is_contiguous(), f"{x.shape=} {x.stride()=} {x.dtype=}"
 
         nbytes = x.nbytes
-        cpu_untyped_ptr = self._binary_wrapper.cdll.tms_get_cpu_backup_pointer(x.data_ptr(), nbytes)
+        cpu_ptr = self._binary_wrapper.cdll.tms_get_cpu_backup_pointer(x.data_ptr(), nbytes)
 
-        cpu_u8_ptr = ctypes.cast(cpu_untyped_ptr, ctypes.POINTER(ctypes.c_uint8))
-        np_untyped = np.ctypeslib.as_array(cpu_u8_ptr, shape=(nbytes,))
+        np_untyped = np.ctypeslib.as_array(cpu_ptr, shape=(nbytes,))
         assert np_untyped.dtype == np.uint8, f"{np_untyped.dtype=} {np_untyped.shape=}"
 
         ans_untyped = torch.from_numpy(np_untyped)
