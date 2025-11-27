@@ -1,4 +1,6 @@
 import ctypes
+
+import numpy as np
 import logging
 import os
 from collections import defaultdict
@@ -156,9 +158,18 @@ class _TorchMemorySaverImpl:
         assert x.is_contiguous(), f"{x.shape=} {x.stride()=} {x.dtype=}"
 
         nbytes = x.nbytes
-        cpu_ptr = self._binary_wrapper.cdll.tms_get_cpu_backup_pointer(x.data_ptr(), nbytes)
+        cpu_untyped_ptr = self._binary_wrapper.cdll.tms_get_cpu_backup_pointer(x.data_ptr(), nbytes)
 
-        return TODO
+        cpu_u8_ptr = ctypes.cast(cpu_untyped_ptr, ctypes.POINTER(ctypes.c_uint8))
+        np_arr = np.ctypeslib.as_array(cpu_u8_ptr, shape=(nbytes,))
+        assert np_arr.dtype == np.uint8, f"{np_arr.dtype=} {np_arr.shape=}"
+
+        ans = TODO
+
+        assert ans.dtype == x.dtype
+        assert ans.shape == x.shape
+        assert ans.stride() == x.stride()
+        return ans
 
 def _sanity_checks():
     if "expandable_segments:True" in os.environ.get("PYTORCH_CUDA_ALLOC_CONF", ""):
