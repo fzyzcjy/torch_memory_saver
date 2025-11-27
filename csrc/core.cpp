@@ -229,7 +229,7 @@ uint8_t* TorchMemorySaver::get_cpu_backup_pointer(const uint8_t* query_gpu_ptr, 
             if (metadata.state == AllocationState::ACTIVE) {
                 return nullptr;
             } else {
-                SIMPLE_CHECK(nullptr != metadata.cpu_backup, "get_cpu_backup_pointer: found section but cpu_backup does not exist");
+                SIMPLE_CHECK(nullptr != metadata.cpu_backup, "get_cpu_backup_pointer: found paused allocation but cpu_backup does not exist");
                 return (uint8_t*) metadata.cpu_backup + offset;
             }
         }
