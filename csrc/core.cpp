@@ -214,5 +214,19 @@ void TorchMemorySaver::resume(const std::string& tag) {
 }
 
 void* TorchMemorySaver::get_cpu_backup_pointer(const void* gpu_ptr, uint64_t size) {
+#if defined(USE_ROCM)
+    exit(1); // unsupported
+
+#elif defined(USE_CUDA)
+    const std::lock_guard <std::mutex> lock(allocator_metadata_mutex_);
+
+    for (auto it = allocation_metadata_.begin(); it != allocation_metadata_.end(); ++it) {
+        void *ptr = it->first;
+        AllocationMetadata &metadata = it->second;
+
+    }
     return TODO;
+#else
+    #error "USE_PLATFORM is not set"
+#endif
 }
