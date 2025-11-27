@@ -225,7 +225,11 @@ void* TorchMemorySaver::get_cpu_backup_pointer(const void* gpu_ptr, uint64_t siz
         AllocationMetadata &metadata = it->second;
 
     }
-    return TODO;
+
+    std::cerr << "[torch_memory_saver.cpp] get_cpu_backup_pointer fail to find backup "
+              << " gpu_ptr=" << gpu_ptr << " size=" << size
+              << std::endl;
+    exit(1);
 #else
     #error "USE_PLATFORM is not set"
 #endif
