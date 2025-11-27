@@ -226,7 +226,8 @@ void* TorchMemorySaver::get_cpu_backup_pointer(const void* query_gpu_ptr, uint64
 
         if ((ptr <= query_gpu_ptr) && (query_gpu_ptr + query_size <= ptr + metadata.size)) {
             const size_t offset = query_gpu_ptr - ptr;
-            TODO;
+            SIMPLE_CHECK(nullptr != metadata.cpu_backup, "get_cpu_backup_pointer: found section but cpu_backup does not exist");
+            return metadata.cpu_backup + offset;
         }
     }
 
