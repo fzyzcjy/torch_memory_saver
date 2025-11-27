@@ -123,4 +123,8 @@ void tms_resume(const char* tag) {
     std::string tag_str = (tag != nullptr) ? std::string(tag) : "";
     TorchMemorySaver::instance().resume(tag_str);
 }
+
+void* tms_get_cpu_backup_pointer(const void* gpu_ptr, uint64_t size) {
+    return TorchMemorySaver::instance().get_cpu_backup_pointer(gpu_ptr, size);
+}
 }
