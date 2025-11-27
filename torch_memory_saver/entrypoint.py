@@ -159,7 +159,7 @@ class _TorchMemorySaverImpl:
 
         nbytes = x.nbytes
         gpu_ptr = ctypes.cast(x.data_ptr(), ctypes.POINTER(ctypes.c_uint8))
-        if gpu_ptr.value is None:
+        if not gpu_ptr:
             return None
 
         cpu_ptr = self._binary_wrapper.cdll.tms_get_cpu_backup_pointer(gpu_ptr, nbytes)
