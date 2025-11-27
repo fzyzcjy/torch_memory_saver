@@ -154,6 +154,10 @@ class _TorchMemorySaverImpl:
     def get_cpu_backup(self, x: torch.Tensor):
         assert x.is_cuda, f"{x.device=}"
         assert x.is_contiguous(), f"{x.shape=} {x.stride()=} {x.dtype=}"
+
+        nbytes = x.nbytes
+        cpu_ptr = self._binary_wrapper.cdll.tms_get_cpu_backup_pointer(x.data_ptr(), nbytes)
+
         return TODO
 
 def _sanity_checks():
