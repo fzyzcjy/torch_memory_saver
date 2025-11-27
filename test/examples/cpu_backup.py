@@ -13,6 +13,7 @@ def run(hook_mode: str):
     print("Allocate tensor_with_backup")
     with torch_memory_saver.region(enable_cpu_backup=True):
         tensor_with_backup = torch.full((20_000_000,), 10, dtype=torch.uint8, device='cuda')
+        typed_tensor_with_backup = torch.full((10, 20, 30), 1.5, dtype=torch.float32, device='cuda')
 
     print("Allocate tensor_without_backup")
     with torch_memory_saver.region(enable_cpu_backup=False):
@@ -23,6 +24,9 @@ def run(hook_mode: str):
     assert tensor_without_backup[:3].tolist() == [20, 20, 20]
 
     torch_memory_saver.pause()
+
+    cpu_tensor = torch_memory_saver.get_cpu_backup(typed_tensor_with_backup)
+    assert cpu_tensor.flatten()[:3].tolist() == [1.5, 1.5, 1.5]
 
     # occupy some space
     tensor_unrelated = torch.full((20_000_000,), 30, dtype=torch.uint8, device='cuda')
