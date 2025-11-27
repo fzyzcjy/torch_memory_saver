@@ -212,3 +212,7 @@ void TorchMemorySaver::resume(const std::string& tag) {
     #error "USE_PLATFORM is not set"
 #endif
 }
+
+void* TorchMemorySaver::get_cpu_backup_pointer(const void* gpu_ptr, uint64_t size) {
+    return TODO;
+}

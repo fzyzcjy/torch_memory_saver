@@ -50,6 +50,7 @@ public:
     void set_memory_margin_bytes(uint64_t value) {
         memory_margin_bytes_.store(value);
     }
+    void* get_cpu_backup_pointer(const void* gpu_ptr, uint64_t size);
 
 private:
     TorchMemorySaver();
