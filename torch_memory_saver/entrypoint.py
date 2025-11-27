@@ -159,10 +159,9 @@ class _TorchMemorySaverImpl:
 
         nbytes = x.nbytes
         gpu_ptr = ctypes.cast(x.data_ptr(), ctypes.POINTER(ctypes.c_uint8))
-        if not gpu_ptr:
-            return None
-
         cpu_ptr = self._binary_wrapper.cdll.tms_get_cpu_backup_pointer(gpu_ptr, nbytes)
+        if not cpu_ptr:
+            return None
 
         np_untyped = np.ctypeslib.as_array(cpu_ptr, shape=(nbytes,))
         assert np_untyped.dtype == np.uint8, f"{np_untyped.dtype=} {np_untyped.shape=}"
