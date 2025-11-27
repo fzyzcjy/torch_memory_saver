@@ -213,7 +213,7 @@ void TorchMemorySaver::resume(const std::string& tag) {
 #endif
 }
 
-void* TorchMemorySaver::get_cpu_backup_pointer(const void* gpu_ptr, uint64_t size) {
+void* TorchMemorySaver::get_cpu_backup_pointer(const void* query_gpu_ptr, uint64_t query_size) {
 #if defined(USE_ROCM)
     exit(1); // unsupported
 
@@ -224,6 +224,10 @@ void* TorchMemorySaver::get_cpu_backup_pointer(const void* gpu_ptr, uint64_t siz
         void *ptr = it->first;
         AllocationMetadata &metadata = it->second;
 
+        if ((ptr <= query_gpu_ptr) && (query_gpu_ptr + query_size <= ptr + metadata.size)) {
+            const size_t offset = query_gpu_ptr - ptr;
+            TODO;
+        }
     }
 
     std::cerr << "[torch_memory_saver.cpp] get_cpu_backup_pointer fail to find backup "
