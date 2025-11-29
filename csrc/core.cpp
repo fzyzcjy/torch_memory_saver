@@ -212,3 +212,35 @@ void TorchMemorySaver::resume(const std::string& tag) {
     #error "USE_PLATFORM is not set"
 #endif
 }
+
+uint8_t* TorchMemorySaver::get_cpu_backup_pointer(const uint8_t* query_gpu_ptr, uint64_t query_size) {
+#if defined(USE_ROCM)
+    exit(1); // unsupported
+
+#elif defined(USE_CUDA)
+    const std::lock_guard <std::mutex> lock(allocator_metadata_mutex_);
+
+    for (auto it = allocation_metadata_.begin(); it != allocation_metadata_.end(); ++it) {
+        uint8_t *ptr = (uint8_t*) it->first;
+        AllocationMetadata &metadata = it->second;
+
+        if ((ptr <= query_gpu_ptr) && (query_gpu_ptr + query_size <= ptr + metadata.size)) {
+            const size_t offset = query_gpu_ptr - ptr;
+            if (metadata.state == AllocationState::ACTIVE) {
+                return nullptr;
+            } else {
+                SIMPLE_CHECK(nullptr != metadata.cpu_backup,
+                    "get_cpu_backup_pointer: found paused allocation but cpu_backup does not exist, do you forget to enable cpu backup");
+                return (uint8_t*) metadata.cpu_backup + offset;
+            }
+        }
+    }
+
+    std::cerr << "[torch_memory_saver.cpp] get_cpu_backup_pointer fail to find backup "
+              << " query_gpu_ptr=" << query_gpu_ptr << " query_size=" << query_size
+              << std::endl;
+    exit(1);
+#else
+    #error "USE_PLATFORM is not set"
+#endif
+}
