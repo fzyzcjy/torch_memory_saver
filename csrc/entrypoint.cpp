@@ -51,11 +51,7 @@ cudaError_t cudaMalloc(void **ptr, size_t size) {
 }
 
 cudaError_t cudaFree(void *ptr) {
-    if (thread_local_config.is_interesting_region()) {
-        return TorchMemorySaver::instance().free(ptr);
-    } else {
-        return APIForwarder::call_real_cuda_free(ptr);
-    }
+    return TorchMemorySaver::instance().free(ptr);
 }
 #endif
 
