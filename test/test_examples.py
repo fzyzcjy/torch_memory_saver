@@ -56,7 +56,7 @@ def _run_in_subprocess(fn, fn_kwargs):
     proc = ctx.Process(target=_subprocess_fn_wrapper, args=(fn, fn_kwargs, output_queue))
     proc.start()
     proc.join()
-    success = output_queue.get()
+    success = output_queue.get() if fn_kwargs.get("hook_mode", "torch") == "torch" else proc.exitcode == 0
     assert success
 
 
