@@ -82,9 +82,9 @@ class TorchMemorySaver:
         self._ensure_initialized()
         self._impl._binary_wrapper.cdll.set_memory_margin_bytes(value)
 
-    def get_cpu_backup(self, x: torch.Tensor, unsafe: bool = False):
+    def get_cpu_backup(self, x: torch.Tensor, zero_copy: bool = False):
         self._ensure_initialized()
-        return self._impl.get_cpu_backup(x, unsafe=unsafe)
+        return self._impl.get_cpu_backup(x, zero_copy=zero_copy)
 
     def _ensure_initialized(self):
         if self._impl is not None:
@@ -153,7 +153,7 @@ class _TorchMemorySaverImpl:
         tag_bytes = tag.encode("utf-8") if tag else None
         self._binary_wrapper.cdll.tms_resume(tag_bytes)
 
-    def get_cpu_backup(self, x: torch.Tensor, unsafe: bool = False):
+    def get_cpu_backup(self, x: torch.Tensor, zero_copy: bool = False):
         assert x.is_cuda, f"{x.device=}"
         assert x.is_contiguous(), f"{x.shape=} {x.stride()=} {x.dtype=}"
 
@@ -170,7 +170,7 @@ class _TorchMemorySaverImpl:
         ans = ans_untyped.view(x.dtype).view(x.shape)
 
         # For simplicity and safety
-        if not unsafe:
+        if not zero_copy:
             ans = ans.clone()
 
         assert ans.device == torch.device("cpu"), f"{ans.device=}"
