@@ -45,6 +45,13 @@ class TorchMemorySaver:
             yield
 
     @contextmanager
+    def override(self, tag: str = _TAG_DEFAULT, enable_cpu_backup: bool = False):
+        """Support separate region when interesting_region is already True (e.g. preload mode)."""
+        self._ensure_initialized()
+        with self._impl.override(tag=tag, enable_cpu_backup=enable_cpu_backup):
+            yield
+
+    @contextmanager
     def disable(self):
         self._ensure_initialized()
         with self._impl.disable():
@@ -123,6 +130,20 @@ class _TorchMemorySaverImpl:
         with torch.cuda.graph(cuda_graph, pool=pool, stream=stream, capture_error_mode=capture_error_mode):
             with self._with_region_config(tag=tag, enable_cpu_backup=enable_cpu_backup):
                 yield
+
+    @contextmanager
+    def override(self, tag: str, enable_cpu_backup: bool):
+        mem_pool = self._mem_pools[(tag, enable_cpu_backup)]
+        cdll = self._binary_wrapper.cdll
+        old_cpu_backup = cdll.tms_get_enable_cpu_backup()
+        cdll.tms_set_current_tag(tag.encode("utf-8"))
+        cdll.tms_set_enable_cpu_backup(enable_cpu_backup)
+        with torch.cuda.use_mem_pool(mem_pool):
+            try:
+                yield
+            finally:
+                cdll.tms_set_current_tag(_TAG_DEFAULT.encode("utf-8"))
+                cdll.tms_set_enable_cpu_backup(old_cpu_backup)
 
     @contextmanager
     def _with_region_config(self, tag: str, enable_cpu_backup: bool):
