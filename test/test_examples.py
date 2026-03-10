@@ -6,7 +6,7 @@ import traceback
 import torch_memory_saver
 from torch_memory_saver.utils import change_env
 
-from examples import simple, cuda_graph, cpu_backup, rl_example, multi_device, training_engine
+from examples import simple, cuda_graph, cpu_backup, rl_example, multi_device, training_engine, nested_region
 
 _HOOK_MODES = ["preload", "torch"]
 
@@ -42,6 +42,14 @@ def test_training_engine():
         change_env("TMS_INIT_ENABLE_CPU_BACKUP", "1")
     ):
         _test_core(training_engine.run, hook_mode="preload")
+
+
+def test_nested_region():
+    with (
+        change_env("TMS_INIT_ENABLE", "1"),
+        change_env("TMS_INIT_ENABLE_CPU_BACKUP", "1")
+    ):
+        _test_core(nested_region.run, hook_mode="preload")
 
 
 def _test_core(fn, hook_mode):
