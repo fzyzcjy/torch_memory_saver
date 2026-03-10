@@ -98,6 +98,10 @@ void tms_set_current_tag(const char* tag) {
     thread_local_config.current_tag_ = tag;
 }
 
+const char* tms_get_current_tag() {
+    return thread_local_config.current_tag_.c_str();
+}
+
 bool tms_get_enable_cpu_backup() {
     return thread_local_config.enable_cpu_backup();
 }
