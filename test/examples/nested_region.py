@@ -1,6 +1,6 @@
 """
 Usage:
-TMS_INIT_ENABLE=1 TMS_INIT_ENABLE_CPU_BACKUP=1 pytest test_examples.py::test_nested_region -v -s
+pytest test_examples.py::test_nested_region -v -s
 
 Test that region() supports nesting (e.g. when TMS_INIT_ENABLE=1 in preload mode).
 
