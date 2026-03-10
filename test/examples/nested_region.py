@@ -30,12 +30,34 @@ def run(hook_mode: str):
 
     SIZE = 10_000_000  # ~40MB in float32
 
+    # Helper to read C-level config state
+    torch_memory_saver._ensure_initialized()
+    cdll = torch_memory_saver._impl._binary_wrapper.cdll
+
+    # --- Verify initial state in preload mode ---
+    assert cdll.tms_get_interesting_region()
+    assert cdll.tms_get_enable_cpu_backup()
+    assert cdll.tms_get_current_tag() == b"default"
+    print("✓ Initial state: interesting_region=True, cpu_backup=True, tag=default")
+
     # --- Allocate model weights (default tag, cpu_backup=True) ---
     model_weight = torch.full((SIZE,), 42.0, dtype=torch.float32, device="cuda")
 
     # --- Allocate grad buffer inside nested region (cpu_backup=False) ---
     with torch_memory_saver.region(tag="grad_buffer", enable_cpu_backup=False):
+        # Verify state inside nested region
+        assert cdll.tms_get_interesting_region()
+        assert not cdll.tms_get_enable_cpu_backup()
+        assert cdll.tms_get_current_tag() == b"grad_buffer"
+        print("✓ Inside region: interesting_region=True, cpu_backup=False, tag=grad_buffer")
+
         grad_buffer = torch.full((SIZE,), 99.0, dtype=torch.float32, device="cuda")
+
+    # Verify state restored after exiting region
+    assert cdll.tms_get_interesting_region()
+    assert cdll.tms_get_enable_cpu_backup()
+    assert cdll.tms_get_current_tag() == b"default"
+    print("✓ After region: interesting_region=True, cpu_backup=True, tag=default (restored)")
 
     mem_before_pause = get_and_print_gpu_memory("Before pause")
 

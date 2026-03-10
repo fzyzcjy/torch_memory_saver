@@ -135,6 +135,9 @@ class _TorchMemorySaverImpl:
         try:
             yield
         finally:
+            assert cdll.tms_get_interesting_region()
+            assert cdll.tms_get_enable_cpu_backup() == enable_cpu_backup
+            assert cdll.tms_get_current_tag().decode("utf-8") == tag
             self._binary_wrapper.set_config(
                 tag=orig_tag,
                 interesting_region=orig_interesting_region,
