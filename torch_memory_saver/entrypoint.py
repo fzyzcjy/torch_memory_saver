@@ -6,7 +6,7 @@ import logging
 import os
 from collections import defaultdict
 from contextlib import contextmanager
-from typing import Optional
+from typing import Optional, Sequence
 import torch
 
 from .binary_wrapper import BinaryWrapper
@@ -23,10 +23,20 @@ class TorchMemorySaver:
         self._impl: Optional[_TorchMemorySaverImpl] = None
 
     @contextmanager
-    def region(self, tag: str = _TAG_DEFAULT, enable_cpu_backup: bool = False):
-        """Context manager for memory saving with optional tag"""
+    def region(self, tag: str = _TAG_DEFAULT, enable_cpu_backup: bool = False, num_chunks: int = 1):
+        """Context manager for memory saving with optional tag.
+
+        Args:
+            tag: Tag for selective pause/resume.
+            enable_cpu_backup: Whether to backup data to CPU on pause.
+            num_chunks: Number of independently pauseable chunks. When > 1,
+                allocations inside this region use chunked virtual memory:
+                one contiguous virtual address range backed by N independent
+                physical allocations. Each chunk can be paused/resumed
+                individually via pause_chunks/resume_chunks.
+        """
         self._ensure_initialized()
-        with self._impl.region(tag=tag, enable_cpu_backup=enable_cpu_backup):
+        with self._impl.region(tag=tag, enable_cpu_backup=enable_cpu_backup, num_chunks=num_chunks):
             yield
 
     @contextmanager
@@ -59,6 +69,26 @@ class TorchMemorySaver:
         """Resume memory for specific tag or all memory if tag is None"""
         self._ensure_initialized()
         self._impl.resume(tag=tag)
+
+    def pause_chunks(self, tag: str, chunk_indices: Sequence[int]):
+        """Pause specific chunks of a chunked allocation.
+
+        Args:
+            tag: Tag identifying the chunked allocation.
+            chunk_indices: Indices of chunks to pause (0-based).
+        """
+        self._ensure_initialized()
+        self._impl.pause_chunks(tag=tag, chunk_indices=chunk_indices)
+
+    def resume_chunks(self, tag: str, chunk_indices: Sequence[int]):
+        """Resume specific chunks of a chunked allocation.
+
+        Args:
+            tag: Tag identifying the chunked allocation.
+            chunk_indices: Indices of chunks to resume (0-based).
+        """
+        self._ensure_initialized()
+        self._impl.resume_chunks(tag=tag, chunk_indices=chunk_indices)
 
     # for compatibility
     @property
@@ -109,12 +139,12 @@ class _TorchMemorySaverImpl:
             atexit.register(self._mem_pools.clear)
 
     @contextmanager
-    def region(self, tag: str, enable_cpu_backup: bool):
+    def region(self, tag: str, enable_cpu_backup: bool, num_chunks: int = 1):
         # For hook_mode=preload, we need this b/c https://github.com/fzyzcjy/torch_memory_saver/pull/20#issuecomment-3047099047
         # (For hook_mode=torch we may not need it, but currently our primary usage is hook_mode=preload, thus we do this for simplicity)
         mem_pool = self._mem_pools[(tag, enable_cpu_backup)]
         with torch.cuda.use_mem_pool(mem_pool):
-            with self._with_region_config(tag=tag, enable_cpu_backup=enable_cpu_backup):
+            with self._with_region_config(tag=tag, enable_cpu_backup=enable_cpu_backup, num_chunks=num_chunks):
                 yield
 
     @contextmanager
@@ -125,13 +155,14 @@ class _TorchMemorySaverImpl:
                 yield
 
     @contextmanager
-    def _with_region_config(self, tag: str, enable_cpu_backup: bool):
+    def _with_region_config(self, tag: str, enable_cpu_backup: bool, num_chunks: int = 1):
         cdll = self._binary_wrapper.cdll
         orig_tag = cdll.tms_get_current_tag().decode("utf-8")
         orig_interesting_region = cdll.tms_get_interesting_region()
         orig_enable_cpu_backup = cdll.tms_get_enable_cpu_backup()
+        orig_num_chunks = cdll.tms_get_num_chunks()
 
-        self._binary_wrapper.set_config(tag=tag, interesting_region=True, enable_cpu_backup=enable_cpu_backup)
+        self._binary_wrapper.set_config(tag=tag, interesting_region=True, enable_cpu_backup=enable_cpu_backup, num_chunks=num_chunks)
         try:
             yield
         finally:
@@ -142,6 +173,7 @@ class _TorchMemorySaverImpl:
                 tag=orig_tag,
                 interesting_region=orig_interesting_region,
                 enable_cpu_backup=orig_enable_cpu_backup,
+                num_chunks=orig_num_chunks,
             )
 
     @contextmanager
@@ -167,6 +199,16 @@ class _TorchMemorySaverImpl:
     def resume(self, tag: Optional[str]):
         tag_bytes = tag.encode("utf-8") if tag else None
         self._binary_wrapper.cdll.tms_resume(tag_bytes)
+
+    def pause_chunks(self, tag: str, chunk_indices: Sequence[int]):
+        tag_bytes = tag.encode("utf-8")
+        arr = (ctypes.c_size_t * len(chunk_indices))(*chunk_indices)
+        self._binary_wrapper.cdll.tms_pause_chunks(tag_bytes, arr, len(chunk_indices))
+
+    def resume_chunks(self, tag: str, chunk_indices: Sequence[int]):
+        tag_bytes = tag.encode("utf-8")
+        arr = (ctypes.c_size_t * len(chunk_indices))(*chunk_indices)
+        self._binary_wrapper.cdll.tms_resume_chunks(tag_bytes, arr, len(chunk_indices))
 
     def get_cpu_backup(self, x: torch.Tensor, zero_copy: bool = False):
         assert x.is_cuda, f"{x.device=}"

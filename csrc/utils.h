@@ -101,6 +101,17 @@ namespace CUDAUtils {
             accessDesc.flags = hipMemAccessFlagsProtReadWrite;
             CURESULT_CHECK(hipMemSetAccess(ptr, size, &accessDesc, 1));
         }
+
+        static size_t cu_mem_get_granularity(CUdevice device) {
+            hipMemAllocationProp prop = {};
+            prop.type = hipMemAllocationTypePinned;
+            prop.location.type = hipMemLocationTypeDevice;
+            prop.location.id = device;
+            size_t granularity = 0;
+            CURESULT_CHECK(hipMemGetAllocationGranularity(&granularity, &prop,
+                                                          hipMemAllocationGranularityMinimum));
+            return granularity;
+        }
     #endif
 
 #elif defined(USE_CUDA)
@@ -144,6 +155,17 @@ namespace CUDAUtils {
         CUdevice ans;
         CURESULT_CHECK(cuDeviceGet(&ans, device_ordinal));
         return ans;
+    }
+
+    static size_t cu_mem_get_granularity(CUdevice device) {
+        CUmemAllocationProp prop = {};
+        prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+        prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+        prop.location.id = device;
+        size_t granularity = 0;
+        CURESULT_CHECK(cuMemGetAllocationGranularity(&granularity, &prop,
+                                                      CU_MEM_ALLOC_GRANULARITY_MINIMUM));
+        return granularity;
     }
 
 #else
