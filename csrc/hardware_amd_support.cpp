@@ -185,10 +185,18 @@ namespace ROCmHIPImplementation {
         // Store metadata
         {
             const std::lock_guard<std::mutex> lock(allocator_metadata_mutex);
-            allocation_metadata.emplace(
-                *ptr,
-                AllocationMetadata{size, device, tag, AllocationState::ACTIVE, enable_cpu_backup, nullptr, aligned_size, std::move(allocHandles), std::move(chunk_sizes)}
-            );
+            AllocationMetadata meta;
+            meta.size = size;
+            meta.device = device;
+            meta.tag = tag;
+            meta.state = AllocationState::ACTIVE;
+            meta.enable_cpu_backup = enable_cpu_backup;
+            meta.cpu_backup = nullptr;
+            meta.is_chunked = false;
+            meta.aligned_size = aligned_size;
+            meta.allocHandles = std::move(allocHandles);
+            meta.chunk_sizes = std::move(chunk_sizes);
+            allocation_metadata.emplace(*ptr, std::move(meta));
         }
 
 #ifdef TMS_DEBUG_LOG
