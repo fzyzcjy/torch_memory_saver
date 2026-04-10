@@ -23,20 +23,32 @@ class TorchMemorySaver:
         self._impl: Optional[_TorchMemorySaverImpl] = None
 
     @contextmanager
-    def region(self, tag: str = _TAG_DEFAULT, enable_cpu_backup: bool = False, num_chunks: int = 1):
+    def region(self, tag: str = _TAG_DEFAULT, enable_cpu_backup: bool = False, chunk_size: int = 0):
         """Context manager for memory saving with optional tag.
 
         Args:
             tag: Tag for selective pause/resume.
             enable_cpu_backup: Whether to backup data to CPU on pause.
-            num_chunks: Number of independently pauseable chunks. When > 1,
-                allocations inside this region use chunked virtual memory:
-                one contiguous virtual address range backed by N independent
-                physical allocations. Each chunk can be paused/resumed
-                individually via pause_chunks/resume_chunks.
+            chunk_size: Size in bytes of each independently pauseable chunk.
+                When > 0, allocations inside this region use chunked virtual
+                memory: one contiguous virtual address range backed by N
+                independent physical allocations (N = size / chunk_size).
+                Requirements enforced at allocation time:
+                  * chunk_size must be a multiple of the device allocation
+                    granularity (typically 2 MiB on current GPUs); the
+                    library fails loudly otherwise rather than silently
+                    rounding up.
+                  * The total allocation size must be exactly divisible by
+                    chunk_size.
+                Chunk-level APIs (pause_chunks/resume_chunks/get_num_chunks/
+                get_chunk_states) require the tag to uniquely identify a
+                single allocation. Per-chunk and whole-allocation pause/
+                resume compose freely: calling either form on a chunk
+                already in the target state is a no-op.
+                Not supported on ROCm < 7.0 (TMS_ROCM_LEGACY_CHUNKED build).
         """
         self._ensure_initialized()
-        with self._impl.region(tag=tag, enable_cpu_backup=enable_cpu_backup, num_chunks=num_chunks):
+        with self._impl.region(tag=tag, enable_cpu_backup=enable_cpu_backup, chunk_size=chunk_size):
             yield
 
     @contextmanager
@@ -73,9 +85,9 @@ class TorchMemorySaver:
     def pause_chunks(self, tag: str, chunk_indices: Sequence[int]):
         """Pause specific chunks of a chunked allocation.
 
-        Args:
-            tag: Tag identifying the chunked allocation.
-            chunk_indices: Indices of chunks to pause (0-based).
+        The tag must uniquely identify a single chunked allocation. Indices
+        pointing at chunks that are already paused are silently skipped, so
+        this composes with pause()/resume().
         """
         self._ensure_initialized()
         self._impl.pause_chunks(tag=tag, chunk_indices=chunk_indices)
@@ -83,12 +95,29 @@ class TorchMemorySaver:
     def resume_chunks(self, tag: str, chunk_indices: Sequence[int]):
         """Resume specific chunks of a chunked allocation.
 
-        Args:
-            tag: Tag identifying the chunked allocation.
-            chunk_indices: Indices of chunks to resume (0-based).
+        The tag must uniquely identify a single chunked allocation. Indices
+        pointing at chunks that are already active are silently skipped.
         """
         self._ensure_initialized()
         self._impl.resume_chunks(tag=tag, chunk_indices=chunk_indices)
+
+    def get_num_chunks(self, tag: str) -> int:
+        """Return the number of chunks for the allocation with the given tag.
+
+        The tag must be non-empty and must uniquely identify a single
+        allocation. Returns 0 if no allocation matches, 1 for non-chunked
+        allocations.
+        """
+        self._ensure_initialized()
+        return self._impl.get_num_chunks(tag=tag)
+
+    def get_chunk_states(self, tag: str) -> list:
+        """Return a list of booleans, one per chunk: True = active, False = paused.
+
+        The tag must uniquely identify a single chunked allocation.
+        """
+        self._ensure_initialized()
+        return self._impl.get_chunk_states(tag=tag)
 
     # for compatibility
     @property
@@ -139,12 +168,15 @@ class _TorchMemorySaverImpl:
             atexit.register(self._mem_pools.clear)
 
     @contextmanager
-    def region(self, tag: str, enable_cpu_backup: bool, num_chunks: int = 1):
+    def region(self, tag: str, enable_cpu_backup: bool, chunk_size: int = 0):
         # For hook_mode=preload, we need this b/c https://github.com/fzyzcjy/torch_memory_saver/pull/20#issuecomment-3047099047
         # (For hook_mode=torch we may not need it, but currently our primary usage is hook_mode=preload, thus we do this for simplicity)
-        mem_pool = self._mem_pools[(tag, enable_cpu_backup)]
+        # chunk_size is part of the key: a cached block allocated with one
+        # chunk_size cannot be reused under a different chunk_size without
+        # the per-chunk metadata going out of sync with the physical layout.
+        mem_pool = self._mem_pools[(tag, enable_cpu_backup, chunk_size)]
         with torch.cuda.use_mem_pool(mem_pool):
-            with self._with_region_config(tag=tag, enable_cpu_backup=enable_cpu_backup, num_chunks=num_chunks):
+            with self._with_region_config(tag=tag, enable_cpu_backup=enable_cpu_backup, chunk_size=chunk_size):
                 yield
 
     @contextmanager
@@ -155,14 +187,14 @@ class _TorchMemorySaverImpl:
                 yield
 
     @contextmanager
-    def _with_region_config(self, tag: str, enable_cpu_backup: bool, num_chunks: int = 1):
+    def _with_region_config(self, tag: str, enable_cpu_backup: bool, chunk_size: int = 0):
         cdll = self._binary_wrapper.cdll
         orig_tag = cdll.tms_get_current_tag().decode("utf-8")
         orig_interesting_region = cdll.tms_get_interesting_region()
         orig_enable_cpu_backup = cdll.tms_get_enable_cpu_backup()
-        orig_num_chunks = cdll.tms_get_num_chunks()
+        orig_chunk_size = cdll.tms_get_chunk_size()
 
-        self._binary_wrapper.set_config(tag=tag, interesting_region=True, enable_cpu_backup=enable_cpu_backup, num_chunks=num_chunks)
+        self._binary_wrapper.set_config(tag=tag, interesting_region=True, enable_cpu_backup=enable_cpu_backup, chunk_size=chunk_size)
         try:
             yield
         finally:
@@ -173,7 +205,7 @@ class _TorchMemorySaverImpl:
                 tag=orig_tag,
                 interesting_region=orig_interesting_region,
                 enable_cpu_backup=orig_enable_cpu_backup,
-                num_chunks=orig_num_chunks,
+                chunk_size=orig_chunk_size,
             )
 
     @contextmanager
@@ -209,6 +241,19 @@ class _TorchMemorySaverImpl:
         tag_bytes = tag.encode("utf-8")
         arr = (ctypes.c_size_t * len(chunk_indices))(*chunk_indices)
         self._binary_wrapper.cdll.tms_resume_chunks(tag_bytes, arr, len(chunk_indices))
+
+    def get_num_chunks(self, tag: str) -> int:
+        tag_bytes = tag.encode("utf-8")
+        return self._binary_wrapper.cdll.tms_get_num_chunks_for_tag(tag_bytes)
+
+    def get_chunk_states(self, tag: str) -> list:
+        tag_bytes = tag.encode("utf-8")
+        num_chunks = self._binary_wrapper.cdll.tms_get_num_chunks_for_tag(tag_bytes)
+        if num_chunks == 0:
+            return []
+        buf = (ctypes.c_uint8 * num_chunks)()
+        self._binary_wrapper.cdll.tms_get_chunk_states(tag_bytes, buf, num_chunks)
+        return [bool(b) for b in buf]
 
     def get_cpu_backup(self, x: torch.Tensor, zero_copy: bool = False):
         assert x.is_cuda, f"{x.device=}"
