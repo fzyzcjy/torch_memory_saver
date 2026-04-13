@@ -34,8 +34,10 @@ def _setup_function_signatures(cdll):
     cdll.tms_get_num_chunks_for_tag.argtypes = [ctypes.c_char_p]
     cdll.tms_get_num_chunks_for_tag.restype = ctypes.c_size_t
     cdll.tms_get_chunk_states.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t]
-    cdll.tms_pause.argtypes = [ctypes.c_char_p]
-    cdll.tms_resume.argtypes = [ctypes.c_char_p]
+    cdll.tms_get_chunk_states.restype = ctypes.c_bool
+    cdll.tms_get_chunk_layout.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_size_t), ctypes.POINTER(ctypes.c_size_t), ctypes.c_size_t]
+    cdll.tms_pause.argtypes = [ctypes.c_char_p, ctypes.c_bool]
+    cdll.tms_resume.argtypes = [ctypes.c_char_p, ctypes.c_bool]
     cdll.tms_pause_chunks.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_size_t), ctypes.c_size_t]
     cdll.tms_resume_chunks.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_size_t), ctypes.c_size_t]
     cdll.set_memory_margin_bytes.argtypes = [ctypes.c_uint64]

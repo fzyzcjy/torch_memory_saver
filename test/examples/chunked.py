@@ -1,6 +1,7 @@
 import logging
 import multiprocessing
 import sys
+import threading
 
 import torch
 
@@ -41,6 +42,15 @@ def _error_pause_chunks_on_plain(hook_mode):
     # the "non-chunked allocation" check rather than silently returning.
     assert tensor.is_cuda
     torch_memory_saver.pause_chunks(tag="plain", chunk_indices=[0])
+
+
+def _error_access_paused_chunk(hook_mode):
+    torch_memory_saver.hook_mode = hook_mode
+    with torch_memory_saver.region(tag="access_paused", enable_cpu_backup=False, chunk_size=CHUNK_SIZE_BYTES):
+        tensor = torch.full((2 * CHUNK_SIZE_BYTES,), 42, dtype=torch.uint8, device='cuda')
+    torch_memory_saver.pause_chunks(tag="access_paused", chunk_indices=[0])
+    # Reading from an unmapped chunk should fault.
+    _ = tensor[0].item()
 
 
 def _run_expecting_failure(target, hook_mode, description):
@@ -230,12 +240,108 @@ def run(hook_mode: str):
     torch.cuda.empty_cache()
     print("Test 7 PASSED")
 
-    # --- Test 8: Fatal-error paths (nested subprocesses expected to abort) ---
-    print("\n=== Test 8: Error cases via nested subprocess ===")
+    # --- Test 8: save/restore chunk state across pause/resume ---
+    print("\n=== Test 8: save/restore chunk state ===")
+    with torch_memory_saver.region(tag="chunked_saverestore", enable_cpu_backup=True, chunk_size=CHUNK_SIZE_BYTES):
+        tensor8sr = torch.zeros(NUM_CHUNKS * CHUNK_SIZE_BYTES, dtype=torch.uint8, device='cuda')
+        for i in range(NUM_CHUNKS):
+            tensor8sr[i * CHUNK_SIZE_BYTES:(i + 1) * CHUNK_SIZE_BYTES] = i + 1
+
+    # Pause a subset first.
+    paused_before = [3, 5, 7]
+    torch_memory_saver.pause_chunks(tag="chunked_saverestore", chunk_indices=paused_before)
+    states_before = torch_memory_saver.get_chunk_states(tag="chunked_saverestore")
+    for i in range(NUM_CHUNKS):
+        assert states_before[i] == (i not in paused_before), f"pre-check chunk {i}"
+
+    # Pause everything with save_chunk_state=True.
+    torch_memory_saver.pause(tag="chunked_saverestore", save_chunk_state=True)
+    assert torch_memory_saver.get_chunk_states(tag="chunked_saverestore") == [False] * NUM_CHUNKS
+
+    # Resume with restore_chunk_state=True — chunks 3,5,7 should stay paused.
+    torch_memory_saver.resume(tag="chunked_saverestore", restore_chunk_state=True)
+    states_after = torch_memory_saver.get_chunk_states(tag="chunked_saverestore")
+    assert states_after == states_before, \
+        f"expected {states_before}, got {states_after}"
+
+    # Verify data in the active chunks is intact.
+    for i in range(NUM_CHUNKS):
+        if i not in paused_before:
+            assert tensor8sr[i * CHUNK_SIZE_BYTES].item() == i + 1, f"data lost in chunk {i}"
+
+    # Clean up: resume everything so free() can unmap active chunks.
+    torch_memory_saver.resume(tag="chunked_saverestore")
+    for i in range(NUM_CHUNKS):
+        assert tensor8sr[i * CHUNK_SIZE_BYTES].item() == i + 1, f"data lost after full resume chunk {i}"
+
+    del tensor8sr
+    torch.cuda.empty_cache()
+    print("Test 8 PASSED")
+
+    # --- Test 9: get_chunk_layout introspection ---
+    print("\n=== Test 9: get_chunk_layout ===")
+    with torch_memory_saver.region(tag="chunked_layout", enable_cpu_backup=False, chunk_size=CHUNK_SIZE_BYTES):
+        tensor9l = torch.zeros(4 * CHUNK_SIZE_BYTES, dtype=torch.uint8, device='cuda')
+
+    layout = torch_memory_saver.get_chunk_layout(tag="chunked_layout")
+    assert len(layout) == 4, f"expected 4 chunks, got {len(layout)}"
+    for i, (off, sz) in enumerate(layout):
+        assert off == i * CHUNK_SIZE_BYTES, f"chunk {i} offset {off} != {i * CHUNK_SIZE_BYTES}"
+        assert sz == CHUNK_SIZE_BYTES, f"chunk {i} size {sz} != {CHUNK_SIZE_BYTES}"
+
+    # Missing tag returns empty.
+    assert torch_memory_saver.get_chunk_layout(tag="nonexistent_tag_xyz") == []
+
+    del tensor9l
+    torch.cuda.empty_cache()
+    print("Test 9 PASSED")
+
+    # --- Test 10: Concurrent pause_chunks / get_chunk_states ---
+    print("\n=== Test 10: Concurrent chunk operations ===")
+    with torch_memory_saver.region(tag="concurrent", enable_cpu_backup=True, chunk_size=CHUNK_SIZE_BYTES):
+        tensor10 = torch.zeros(NUM_CHUNKS * CHUNK_SIZE_BYTES, dtype=torch.uint8, device='cuda')
+        for i in range(NUM_CHUNKS):
+            tensor10[i * CHUNK_SIZE_BYTES:(i + 1) * CHUNK_SIZE_BYTES] = i + 1
+
+    errors = []
+
+    def _toggle_chunks(indices, iterations):
+        try:
+            for _ in range(iterations):
+                torch_memory_saver.pause_chunks(tag="concurrent", chunk_indices=indices)
+                torch_memory_saver.get_chunk_states(tag="concurrent")
+                torch_memory_saver.resume_chunks(tag="concurrent", chunk_indices=indices)
+        except Exception as e:
+            errors.append(e)
+
+    threads = [
+        threading.Thread(target=_toggle_chunks, args=([0, 1], 20)),
+        threading.Thread(target=_toggle_chunks, args=([2, 3], 20)),
+        threading.Thread(target=_toggle_chunks, args=([4, 5], 20)),
+        threading.Thread(target=_toggle_chunks, args=([6, 7], 20)),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors, f"concurrent test failed: {errors}"
+
+    # After all threads finish, all chunks should be active again.
+    torch_memory_saver.resume(tag="concurrent")
+    for i in range(NUM_CHUNKS):
+        assert tensor10[i * CHUNK_SIZE_BYTES].item() == i + 1, f"data corruption in chunk {i}"
+
+    del tensor10
+    torch.cuda.empty_cache()
+    print("Test 10 PASSED")
+
+    # --- Test 11: Fatal-error paths (nested subprocesses expected to abort) ---
+    print("\n=== Test 11: Error cases via nested subprocess ===")
     _run_expecting_failure(_error_non_divisible_size, hook_mode, "non-divisible size")
     _run_expecting_failure(_error_non_aligned_chunk_size, hook_mode, "non-granularity-aligned chunk_size")
     _run_expecting_failure(_error_pause_chunks_on_plain, hook_mode, "pause_chunks on non-chunked allocation")
-    print("Test 8 PASSED")
+    _run_expecting_failure(_error_access_paused_chunk, hook_mode, "access paused chunk memory")
+    print("Test 11 PASSED")
 
     print("\n=== All chunked allocation tests PASSED ===")
 

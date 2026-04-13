@@ -136,19 +136,24 @@ size_t tms_get_num_chunks_for_tag(const char* tag) {
     return TorchMemorySaver::instance().get_num_chunks(tag_str);
 }
 
-void tms_get_chunk_states(const char* tag, uint8_t* out_active, size_t num_chunks) {
+bool tms_get_chunk_states(const char* tag, uint8_t* out_active, size_t num_chunks) {
     std::string tag_str = (tag != nullptr) ? std::string(tag) : "";
-    TorchMemorySaver::instance().get_chunk_states(tag_str, out_active, num_chunks);
+    return TorchMemorySaver::instance().get_chunk_states(tag_str, out_active, num_chunks);
 }
 
-void tms_pause(const char* tag) {
+void tms_get_chunk_layout(const char* tag, size_t* out_offsets, size_t* out_sizes, size_t num_chunks) {
     std::string tag_str = (tag != nullptr) ? std::string(tag) : "";
-    TorchMemorySaver::instance().pause(tag_str);
+    TorchMemorySaver::instance().get_chunk_layout(tag_str, out_offsets, out_sizes, num_chunks);
 }
 
-void tms_resume(const char* tag) {
+void tms_pause(const char* tag, bool save_chunk_state) {
     std::string tag_str = (tag != nullptr) ? std::string(tag) : "";
-    TorchMemorySaver::instance().resume(tag_str);
+    TorchMemorySaver::instance().pause(tag_str, save_chunk_state);
+}
+
+void tms_resume(const char* tag, bool restore_chunk_state) {
+    std::string tag_str = (tag != nullptr) ? std::string(tag) : "";
+    TorchMemorySaver::instance().resume(tag_str, restore_chunk_state);
 }
 
 void tms_pause_chunks(const char* tag, const size_t* chunk_indices, size_t num_indices) {

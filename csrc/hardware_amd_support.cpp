@@ -192,7 +192,7 @@ namespace ROCmHIPImplementation {
             meta.state = AllocationState::ACTIVE;
             meta.enable_cpu_backup = enable_cpu_backup;
             meta.cpu_backup = nullptr;
-            meta.is_chunked = false;
+            meta.pauseable_chunks = false;
             meta.aligned_size = aligned_size;
             meta.allocHandles = std::move(allocHandles);
             meta.chunk_sizes = std::move(chunk_sizes);
