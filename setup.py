@@ -110,7 +110,21 @@ def _create_ext_modules(platform):
         libraries = ['cuda', 'cudart']
         platform_macros = [('USE_CUDA', '1')]
     
-    # Create extensions with different hook modes
+    # Suffix the compiled .so files with the CUDA major they link against, so
+    # a single wheel can ship cu12 and cu13 variants side-by-side. `utils.py`
+    # picks the right one at runtime via torch.version.cuda / libcudart probe.
+    # ROCm builds are single-variant for now (no suffix).
+    if platform == "cuda":
+        cuda_major = os.environ.get("TMS_CUDA_MAJOR")
+        if not cuda_major:
+            raise RuntimeError(
+                "TMS_CUDA_MAJOR env var must be set for CUDA builds "
+                "(use `make build-wheel-multi-cuda` or scripts/build_multi_cuda.sh)."
+            )
+        name_suffix = f"_cu{cuda_major}"
+    else:
+        name_suffix = ""
+
     ext_modules = [
         PlatformExtension(
             name,
@@ -128,11 +142,11 @@ def _create_ext_modules(platform):
             extra_compile_args=extra_compile_args,
         )
         for name, extra_macros in [
-            ('torch_memory_saver_hook_mode_preload', [('TMS_HOOK_MODE_PRELOAD', '1')]),
-            ('torch_memory_saver_hook_mode_torch', [('TMS_HOOK_MODE_TORCH', '1')]),
+            (f'torch_memory_saver_hook_mode_preload{name_suffix}', [('TMS_HOOK_MODE_PRELOAD', '1')]),
+            (f'torch_memory_saver_hook_mode_torch{name_suffix}', [('TMS_HOOK_MODE_TORCH', '1')]),
         ]
     ]
-    
+
     return ext_modules
 
 
@@ -150,7 +164,7 @@ class build_ext_for_platform(build_platform_ext):
 
 setup(
     name='torch_memory_saver',
-    version='0.0.9',
+    version='0.0.9.post1',
     ext_modules=ext_modules,
     cmdclass={'build_ext': build_ext_for_platform},
     python_requires=">=3.9",
