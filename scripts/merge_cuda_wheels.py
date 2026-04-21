@@ -21,6 +21,13 @@ import re
 import zipfile
 from pathlib import Path
 
+# Historical 0.0.9 name (cu12-only) that downstream projects hardcode as an
+# LD_PRELOAD path (e.g. slime). The merged wheel duplicates the cu12 .so under
+# this name so those call sites keep working on CUDA 12; CUDA 13 hardcoders
+# were already broken on 0.0.9 and should migrate to get_binary_path_from_package.
+_COMPAT_CUDA_MAJOR = "12"
+_COMPAT_SO_RE = re.compile(rf"^(torch_memory_saver_hook_mode_\w+)_cu{_COMPAT_CUDA_MAJOR}\.abi3\.so$")
+
 
 def _urlsafe_b64(digest: bytes) -> str:
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
@@ -79,6 +86,15 @@ def merge(input_wheels: list[Path], out_path: Path) -> None:
 
     if record_name is None:
         raise SystemExit("No RECORD file found in any input wheel.")
+
+    # Backward-compat: duplicate each cu12 hook .so under the historical
+    # un-suffixed filename (see _COMPAT_SO_RE comment above).
+    for name in list(merged):
+        m = _COMPAT_SO_RE.match(name)
+        if m:
+            compat_name = f"{m.group(1)}.abi3.so"
+            if compat_name not in merged:
+                merged[compat_name] = merged[name]
 
     # Rebuild RECORD: one line per file, then the RECORD's own entry with empty hash/size.
     record_lines: list[str] = []
