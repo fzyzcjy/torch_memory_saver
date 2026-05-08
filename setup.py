@@ -113,7 +113,7 @@ def _create_ext_modules(platform):
     # Suffix the compiled .so files with the CUDA major they link against, so
     # a single wheel can ship cu12 and cu13 variants side-by-side. `utils.py`
     # picks the right one at runtime via torch.version.cuda / libcudart probe.
-    # ROCm builds are single-variant for now (no suffix).
+    # ROCm builds are single-variant for now and use unsuffixed binaries.
     if platform == "cuda":
         cuda_major = os.environ.get("TMS_CUDA_MAJOR")
         if not cuda_major:

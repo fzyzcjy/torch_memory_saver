@@ -9,6 +9,15 @@ logger = logging.getLogger(__name__)
 _SUPPORTED_CUDA_MAJORS = (13, 12)
 
 
+def _is_rocm_torch() -> bool:
+    try:
+        import torch
+    except ImportError:
+        return False
+
+    return bool(getattr(torch.version, "hip", None))
+
+
 def _detect_cuda_major() -> int:
     """Pick which libcudart major the hosting process will use.
 
@@ -48,24 +57,32 @@ def _detect_cuda_major() -> int:
 
 def get_binary_path_from_package(stem: str):
     """Return the path to the .so for `stem`, picking the variant built against
-    the detected CUDA major.
+    the detected GPU runtime.
 
-    The wheel ships multiple suffixed builds (e.g. `<stem>_cu12.abi3.so`,
-    `<stem>_cu13.abi3.so`); this resolves to whichever matches the runtime CUDA.
+    CUDA wheels ship multiple suffixed builds (e.g. `<stem>_cu12.abi3.so`,
+    `<stem>_cu13.abi3.so`). ROCm builds ship an unsuffixed binary
+    (e.g. `<stem>.abi3.so`).
 
     Raises:
-        RuntimeError: if no CUDA runtime can be detected, or if zero or
+        RuntimeError: if no GPU runtime can be detected, or if zero or
             multiple .so files match the expected pattern.
     """
-    major = _detect_cuda_major()
     dir_package = Path(__file__).parent
-    pattern = f"{stem}_cu{major}.*.so"
+
+    if _is_rocm_torch():
+        pattern = f"{stem}.*.so"
+        runtime_desc = "ROCm/HIP torch"
+    else:
+        major = _detect_cuda_major()
+        pattern = f"{stem}_cu{major}.*.so"
+        runtime_desc = f"CUDA major={major}"
+
     candidates = [p for d in (dir_package, dir_package.parent) for p in d.glob(pattern)]
     if len(candidates) != 1:
         raise RuntimeError(
             f"torch_memory_saver: expected exactly one .so matching {pattern!r} "
-            f"(detected CUDA major={major}), found {len(candidates)}: {candidates}. "
-            f"This usually means the installed wheel does not match your CUDA runtime."
+            f"(detected {runtime_desc}), found {len(candidates)}: {candidates}. "
+            f"This usually means the installed wheel does not match your GPU runtime."
         )
     return candidates[0]
 
