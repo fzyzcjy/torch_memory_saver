@@ -77,12 +77,17 @@ namespace CUDAUtils {
             return ans;
         }
 
-        static cudaError_t cu_mem_create(CUmemGenericAllocationHandle *alloc_handle, size_t size, CUdevice device) {
+        static hipMemAllocationProp make_alloc_prop(CUdevice device) {
             hipMemAllocationProp prop = {};
             prop.type = hipMemAllocationTypePinned;
             prop.location.type = hipMemLocationTypeDevice;
             prop.location.id = device;
             prop.allocFlags.compressionType = 0x0;
+            return prop;
+        }
+
+        static cudaError_t cu_mem_create(CUmemGenericAllocationHandle *alloc_handle, size_t size, CUdevice device) {
+            hipMemAllocationProp prop = make_alloc_prop(device);
 
             hipError_t ret = hipMemCreate(alloc_handle, size, &prop, 0);
             if (ret == hipErrorOutOfMemory) {
@@ -101,10 +106,23 @@ namespace CUDAUtils {
             accessDesc.flags = hipMemAccessFlagsProtReadWrite;
             CURESULT_CHECK(hipMemSetAccess(ptr, size, &accessDesc, 1));
         }
+
+        static size_t cu_mem_get_granularity(CUdevice device) {
+            hipMemAllocationProp prop = make_alloc_prop(device);
+            size_t granularity = 0;
+            CURESULT_CHECK(hipMemGetAllocationGranularity(&granularity, &prop,
+                                                          hipMemAllocationGranularityMinimum));
+            return granularity;
+        }
     #endif
 
 #elif defined(USE_CUDA)
-    static cudaError_t cu_mem_create(CUmemGenericAllocationHandle *alloc_handle, size_t size, CUdevice device) {
+    // Build the CUmemAllocationProp used by both cu_mem_create and
+    // cu_mem_get_granularity. Keeping them in sync is critical: the
+    // granularity the driver reports depends on the flags in the prop (in
+    // particular gpuDirectRDMACapable), so querying with a different prop can
+    // return an alignment that the actual allocation rejects.
+    static CUmemAllocationProp make_alloc_prop(CUdevice device) {
         CUmemAllocationProp prop = {};
         prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
         prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
@@ -112,9 +130,14 @@ namespace CUDAUtils {
 
         int flag = 0;
         CURESULT_CHECK(cuDeviceGetAttribute(&flag, CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED, device));
-        if (flag) {  // support GPUDirect RDMA if possible
+        if (flag) {
             prop.allocFlags.gpuDirectRDMACapable = 1;
         }
+        return prop;
+    }
+
+    static cudaError_t cu_mem_create(CUmemGenericAllocationHandle *alloc_handle, size_t size, CUdevice device) {
+        CUmemAllocationProp prop = make_alloc_prop(device);
 
         CUresult ret = cuMemCreate(alloc_handle, size, &prop, 0);
         if (ret == CUDA_ERROR_OUT_OF_MEMORY) {
@@ -144,6 +167,14 @@ namespace CUDAUtils {
         CUdevice ans;
         CURESULT_CHECK(cuDeviceGet(&ans, device_ordinal));
         return ans;
+    }
+
+    static size_t cu_mem_get_granularity(CUdevice device) {
+        CUmemAllocationProp prop = make_alloc_prop(device);
+        size_t granularity = 0;
+        CURESULT_CHECK(cuMemGetAllocationGranularity(&granularity, &prop,
+                                                      CU_MEM_ALLOC_GRANULARITY_MINIMUM));
+        return granularity;
     }
 
 #else
