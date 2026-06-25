@@ -33,6 +33,13 @@ cudaError_t TorchMemorySaver::malloc(
         allocation_metadata_,
         allocator_metadata_mutex_);
 
+#elif defined(USE_XPU)
+    // Disk backup spills via cudaMallocHost/cudaMemcpy (csrc/disk_backend.cpp),
+    // which have no Level Zero equivalent wired up here; reject rather than
+    // silently ignore (the Python setter also raises). cpu_backup still works.
+    SIMPLE_CHECK(!enable_disk_backup, "disk backup is not supported on Intel XPU");
+    return XPUImplementation::xpu_malloc(ptr, device, size, tag, enable_cpu_backup, allocation_metadata_, allocator_metadata_mutex_);
+
 #else
     const size_t allocation_size = CUDAUtils::cu_mem_get_allocation_size(raw_size, device);
     const uint64_t memory_margin_bytes = memory_margin_bytes_.load();
@@ -86,6 +93,9 @@ cudaError_t TorchMemorySaver::free(void *ptr) {
 #if TMS_ROCM_LEGACY_CHUNKED
     return ROCmHIPImplementation::rocm_free(ptr, allocation_metadata_, allocator_metadata_mutex_);
 
+#elif defined(USE_XPU)
+    return XPUImplementation::xpu_free(ptr, allocation_metadata_, allocator_metadata_mutex_);
+
 #else
     AllocationMetadata metadata;
     {
@@ -125,9 +135,17 @@ cudaError_t TorchMemorySaver::free(void *ptr) {
     return cudaSuccess;
 }
 
+bool TorchMemorySaver::is_managed(void *ptr) {
+    const std::lock_guard<std::mutex> lock(allocator_metadata_mutex_);
+    return allocation_metadata_.count(ptr) > 0;
+}
+
 void TorchMemorySaver::pause(const std::string& tag) {
 #if TMS_ROCM_LEGACY_CHUNKED
     ROCmHIPImplementation::rocm_pause(tag, allocation_metadata_, allocator_metadata_mutex_);
+
+#elif defined(USE_XPU)
+    XPUImplementation::xpu_pause(tag, allocation_metadata_, allocator_metadata_mutex_);
 
 #else
     const std::lock_guard <std::mutex> lock(allocator_metadata_mutex_);
@@ -179,6 +197,9 @@ void TorchMemorySaver::pause(const std::string& tag) {
 void TorchMemorySaver::resume(const std::string& tag) {
 #if TMS_ROCM_LEGACY_CHUNKED
     ROCmHIPImplementation::rocm_resume(tag, allocation_metadata_, allocator_metadata_mutex_);
+
+#elif defined(USE_XPU)
+    XPUImplementation::xpu_resume(tag, allocation_metadata_, allocator_metadata_mutex_);
 
 #else
     const std::lock_guard <std::mutex> lock(allocator_metadata_mutex_);
@@ -244,7 +265,7 @@ uint8_t* TorchMemorySaver::get_cpu_backup_pointer(const uint8_t* query_gpu_ptr, 
         uint8_t *ptr = (uint8_t*) it->first;
         AllocationMetadata &metadata = it->second;
 
-#if TMS_ROCM_LEGACY_CHUNKED
+#if TMS_ROCM_LEGACY_CHUNKED || defined(USE_XPU)
         size_t total_size = metadata.aligned_size;
 #else
         size_t total_size = metadata.raw_size;

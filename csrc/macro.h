@@ -65,6 +65,40 @@
 
 #define TMS_ROCM_LEGACY_CHUNKED 0
 
+#elif defined(USE_XPU)
+// Intel XPU (Level Zero) backend. There is no CUDA/HIP runtime here, so we map
+// the handful of CUDA spellings used by the shared (device-agnostic) code onto
+// plain types. The actual device work lives in hardware_xpu_support.cpp and is
+// expressed directly in Level Zero / SYCL, not through these aliases.
+#include <cstddef>
+
+typedef int CUresult;
+typedef int cudaError_t;
+typedef int CUdevice;        // a device ordinal on XPU
+typedef void *cudaStream_t;  // unused on XPU (pluggable allocator passes it through)
+
+#define CUDA_SUCCESS 0
+#define cudaSuccess 0
+#define cudaErrorMemoryAllocation 2
+#define cudaErrorInvalidDevicePointer 17
+
+// The shared CUDA_ERROR_CHECK macro (utils.h) formats errors via
+// cudaGetErrorString. The ROCm branch above provides this by mapping it to
+// hipGetErrorString; XPU has no CUDA/HIP runtime, so we provide the equivalent
+// here. The XPU backend (hardware_xpu_support.cpp) reports detailed Level Zero
+// result codes itself; these labels only stringify the small set of
+// cudaError_t values the shared code returns.
+inline const char *cudaGetErrorString(cudaError_t err) {
+    switch (err) {
+        case cudaSuccess: return "cudaSuccess";
+        case cudaErrorMemoryAllocation: return "out of memory";
+        case cudaErrorInvalidDevicePointer: return "invalid device pointer";
+        default: return "unknown XPU error";
+    }
+}
+
+#define TMS_ROCM_LEGACY_CHUNKED 0
+
 #else
 #error "USE_PLATFORM is not set"
 #endif

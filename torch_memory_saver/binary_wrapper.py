@@ -37,3 +37,11 @@ def _setup_function_signatures(cdll):
     cdll.set_memory_margin_bytes.argtypes = [ctypes.c_uint64]
     cdll.tms_get_cpu_backup_pointer.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint64]
     cdll.tms_get_cpu_backup_pointer.restype = ctypes.POINTER(ctypes.c_uint8)
+
+    # XPU-only symbols (present only in XPU builds).
+    if hasattr(cdll, "tms_xpu_prewarm_devices"):
+        cdll.tms_xpu_prewarm_devices.argtypes = [ctypes.c_int]
+        cdll.tms_xpu_prewarm_devices.restype = None
+    if hasattr(cdll, "tms_xpu_device_free_bytes"):
+        cdll.tms_xpu_device_free_bytes.argtypes = [ctypes.c_int]
+        cdll.tms_xpu_device_free_bytes.restype = ctypes.c_uint64

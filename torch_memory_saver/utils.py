@@ -18,6 +18,15 @@ def _is_rocm_torch() -> bool:
     return bool(getattr(torch.version, "hip", None))
 
 
+def _is_xpu_torch() -> bool:
+    try:
+        import torch
+    except ImportError:
+        return False
+
+    return hasattr(torch, "xpu") and torch.xpu.is_available()
+
+
 def _detect_cuda_major() -> int:
     """Pick which libcudart major the hosting process will use.
 
@@ -72,6 +81,11 @@ def get_binary_path_from_package(stem: str):
     if _is_rocm_torch():
         pattern = f"{stem}.*.so"
         runtime_desc = "ROCm/HIP torch"
+    elif _is_xpu_torch():
+        # XPU builds ship a single unsuffixed binary built against the local
+        # SYCL runtime (the SONAME, e.g. libsycl.so.8, is matched at build time).
+        pattern = f"{stem}.*.so"
+        runtime_desc = "Intel XPU torch"
     else:
         major = _detect_cuda_major()
         pattern = f"{stem}_cu{major}.*.so"

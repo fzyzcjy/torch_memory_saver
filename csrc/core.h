@@ -21,6 +21,10 @@ enum class AllocationState {
     PAUSED
 };
 
+#if defined(USE_XPU)
+#include "hardware_xpu_support.h"
+#endif
+
 struct AllocationMetadata {
     size_t raw_size;
     CUdevice device;
@@ -36,6 +40,12 @@ struct AllocationMetadata {
     size_t aligned_size;
     std::vector<CUmemGenericAllocationHandle> allocHandles;
     std::vector<size_t> chunk_sizes;
+#elif defined(USE_XPU)
+    // Intel XPU (Level Zero): keep the reserved virtual address mapped to a
+    // physical handle that can be unmapped (pause) and re-created (resume).
+    // Fields are defined in hardware_xpu_support.h (XPUAllocExtra).
+    size_t aligned_size;
+    XPUAllocExtra xpu;
 #else
     // CUDA and ROCm 7.0+: Single allocation handle
     size_t allocation_size;
@@ -55,6 +65,10 @@ public:
         bool enable_cpu_backup,
         bool enable_disk_backup);
     cudaError_t free(void *ptr);
+
+    // Whether ptr is tracked by the VMM path (vs a passthrough device alloc).
+    // Used by the XPU torch-mode hook to route frees of non-region allocations.
+    bool is_managed(void *ptr);
 
     void pause(const std::string& tag);
     void resume(const std::string& tag);

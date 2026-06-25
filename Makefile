@@ -38,6 +38,13 @@ build-wheel-multi-cuda:
 build-wheel-multi-cuda-aarch64:
 	ARCH=aarch64 PYTHON_VERSION=3.10 bash scripts/build_multi_cuda.sh
 
+# Intel XPU is built from source against the local oneAPI + torch-XPU runtime
+# (the .so links libsycl.so.<N>, which must match intel-sycl-rt). There is no
+# prebuilt multi-version wheel flow like CUDA; see scripts/build_xpu.sh.
+.PHONY:build-xpu
+build-xpu:
+	bash scripts/build_xpu.sh
+
 .PHONY:build-sdist
 build-sdist:
 	# python3 -m build --no-isolation

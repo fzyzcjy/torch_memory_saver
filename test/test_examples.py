@@ -5,6 +5,7 @@ import multiprocessing
 import traceback
 import torch
 import torch_memory_saver
+from torch_memory_saver.testing_utils import is_xpu
 from torch_memory_saver.utils import change_env
 
 from examples import (
@@ -18,9 +19,17 @@ from examples import (
     multi_device_torch_mode,
     training_engine,
     nested_region,
+    xpu_multi_device,
 )
 
-_HOOK_MODES = ["preload", "torch"]
+# XPU only supports hook_mode='torch' (in-process pluggable allocator);
+# LD_PRELOAD-based preload is CUDA/HIP-only.
+_IS_XPU = is_xpu()
+_HOOK_MODES = ["torch"] if _IS_XPU else ["preload", "torch"]
+
+# Skip reason for tests that exercise CUDA/HIP-only paths on XPU.
+_skip_on_xpu = pytest.mark.skipif(_IS_XPU, reason="CUDA/HIP-only path, not supported on XPU")
+_xpu_only = pytest.mark.skipif(not _IS_XPU, reason="XPU-only test")
 
 
 @pytest.mark.parametrize("hook_mode", _HOOK_MODES)
@@ -28,8 +37,10 @@ def test_simple(hook_mode):
     _test_core(simple.run, hook_mode=hook_mode)
 
 
+@_skip_on_xpu
 @pytest.mark.parametrize("hook_mode", _HOOK_MODES)
 def test_cuda_graph(hook_mode):
+    # Pauseable graph capture is preload-only and CUDA/HIP-specific.
     _test_core(cuda_graph.run, hook_mode=hook_mode)
 
 
@@ -38,6 +49,7 @@ def test_cpu_backup(hook_mode):
     _test_core(cpu_backup.run, hook_mode=hook_mode)
 
 
+@_skip_on_xpu
 @pytest.mark.parametrize("hook_mode", _HOOK_MODES)
 def test_disk_backup(hook_mode):
     _test_core(disk_backup.run, hook_mode=hook_mode)
@@ -45,20 +57,24 @@ def test_disk_backup(hook_mode):
 
 @pytest.mark.parametrize("hook_mode", _HOOK_MODES)
 def test_multi_device(hook_mode):
+    # This example allocates on a non-current device within a single region,
+    # which only the preload (global cudaMalloc) hook can capture. On XPU use
+    # test_xpu_multi_device, which pins each device at alloc time.
     _test_core(multi_device.run, hook_mode=hook_mode)
 
 
-def test_multi_device_torch_mode():
-    # Torch-mode multi-device: pins each device at alloc time. Protects the
-    # per-device MemPool keying (skips at runtime if <2 devices are present).
-    _test_core(multi_device_torch_mode.run, hook_mode="torch")
+@_xpu_only
+def test_xpu_multi_device():
+    _test_core(xpu_multi_device.run, hook_mode="torch")
 
 
+@_skip_on_xpu
 @pytest.mark.parametrize("hook_mode", _HOOK_MODES)
 def test_rl_example(hook_mode):
     _test_core(rl_example.run, hook_mode=hook_mode)
 
 
+@_skip_on_xpu
 def test_training_engine():
     with (
         change_env("TMS_INIT_ENABLE", "1"),
@@ -76,6 +92,7 @@ def test_cuda_vmm_granularity():
         _test_core(cuda_vmm_granularity.run, hook_mode="preload")
 
 
+@_skip_on_xpu
 def test_nested_region():
     with (
         change_env("TMS_INIT_ENABLE", "1"),
