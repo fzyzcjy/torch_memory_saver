@@ -355,34 +355,6 @@ void xpu_resume(
   }
 }
 
-// --------------------------------------------------------- passthrough alloc
-void *xpu_passthrough_malloc(CUdevice device, size_t size) {
-  try {
-    PerDeviceContext &pdc = get_device_context(device);
-    return sycl::malloc_device(size, pdc.sycl_dev, pdc.sycl_ctx);
-  } catch (const std::exception &e) {
-    XPU_ERR("xpu_passthrough_malloc exception: " << e.what());
-    return nullptr;
-  }
-}
-
-void xpu_passthrough_free(void *ptr, CUdevice device) {
-  try {
-    PerDeviceContext &pdc = get_device_context(device);
-    sycl::free(ptr, pdc.sycl_ctx);
-  } catch (const std::exception &e) {
-    XPU_ERR("xpu_passthrough_free exception: " << e.what());
-  }
-}
-
-bool xpu_is_managed(
-    void *ptr,
-    std::unordered_map<void *, AllocationMetadata> &allocation_metadata,
-    std::mutex &allocator_metadata_mutex) {
-  const std::lock_guard<std::mutex> lock(allocator_metadata_mutex);
-  return allocation_metadata.find(ptr) != allocation_metadata.end();
-}
-
 void xpu_prewarm_devices(int n_devices) {
   for (int i = 0; i < n_devices; i++) {
     try {

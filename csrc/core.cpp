@@ -135,11 +135,6 @@ cudaError_t TorchMemorySaver::free(void *ptr) {
     return cudaSuccess;
 }
 
-bool TorchMemorySaver::is_managed(void *ptr) {
-    const std::lock_guard<std::mutex> lock(allocator_metadata_mutex_);
-    return allocation_metadata_.count(ptr) > 0;
-}
-
 #if defined(USE_XPU)
 uint64_t TorchMemorySaver::xpu_committed_bytes(int device_id) {
     return XPUImplementation::xpu_committed_bytes(

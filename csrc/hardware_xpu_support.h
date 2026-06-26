@@ -57,19 +57,6 @@ namespace XPUImplementation {
         std::mutex &allocator_metadata_mutex
     );
 
-    // Plain device alloc/free for allocations made OUTSIDE an interesting
-    // region. The XPUPluggableAllocator is global and intercepts every device
-    // allocation, so non-region allocations must bypass the VMM path.
-    void *xpu_passthrough_malloc(CUdevice device, size_t size);
-    void xpu_passthrough_free(void *ptr, CUdevice device);
-
-    // Whether a pointer is managed by the VMM path (vs a passthrough alloc).
-    bool xpu_is_managed(
-        void *ptr,
-        std::unordered_map<void *, AllocationMetadata> &allocation_metadata,
-        std::mutex &allocator_metadata_mutex
-    );
-
     // Pre-warm per-device SYCL contexts before the pluggable allocator is
     // registered (creating a sycl::context inside an allocator callback can
     // deadlock the SYCL runtime).

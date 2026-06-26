@@ -76,18 +76,10 @@ void *tms_torch_malloc(ssize_t size, int device, cudaStream_t stream) {
               << " size=" << size << " device=" << device << " stream=" << stream
               << std::endl;
 #endif
-#if defined(USE_XPU)
-    // On XPU, XPUPluggableAllocator is global: it intercepts ALL device
-    // allocations, including those outside a TMS region or in pre-init code.
-    // When outside an interesting region, fall through to plain device memory
-    // so we don't try to VMM-manage (and later pause) unrelated allocations.
-    if (!thread_local_config.is_interesting_region()) {
-        return XPUImplementation::xpu_passthrough_malloc(
-            CUDAUtils::cu_device_get(device), size);
-    }
-#else
+    // The torch MemPool allocator is pool-scoped: this hook only fires for
+    // allocations made inside a region() (i.e. within use_mem_pool), so we are
+    // always in an interesting region here.
     SIMPLE_CHECK(thread_local_config.is_interesting_region(), "only support interesting region");
-#endif
     void *ptr;
     CUDA_ERROR_CHECK(TorchMemorySaver::instance().malloc(
         &ptr, CUDAUtils::cu_device_get(device), size, thread_local_config.current_tag_,
@@ -101,16 +93,9 @@ void tms_torch_free(void *ptr, ssize_t ssize, int device, cudaStream_t stream) {
               << " ptr=" << ptr << " ssize=" << ssize << " device=" << device << " stream=" << stream
               << std::endl;
 #endif
-#if defined(USE_XPU)
-    // Passthrough-allocated pointers (made outside a region) are not VMM-managed;
-    // free them via sycl::free. Do NOT assert is_interesting_region(): tensors
-    // allocated inside a region() are freed when they go out of scope, which can
-    // happen long after the region context exited.
-    if (!TorchMemorySaver::instance().is_managed(ptr)) {
-        XPUImplementation::xpu_passthrough_free(ptr, CUDAUtils::cu_device_get(device));
-        return;
-    }
-#else
+#if !defined(USE_XPU)
+    // A region() tensor can be freed after its context exits, so we cannot
+    // assert is_interesting_region() here on the in-process (torch) path.
     SIMPLE_CHECK(thread_local_config.is_interesting_region(), "only support interesting region");
 #endif
     CUDA_ERROR_CHECK(TorchMemorySaver::instance().free(ptr));

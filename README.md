@@ -104,25 +104,26 @@ CUDA/HIP-specific). Pauseable CUDA-graph capture is not available on XPU.
 #### Installation
 
 XPU is **not** shipped as a prebuilt PyPI wheel (see "Why no XPU wheel" below);
-install from source. `setup.py` auto-detects XPU when `icpx` is on `PATH`.
-Always use `--no-build-isolation` so the build sees your installed `torch+xpu`
-and can verify the `libsycl` major matches it (under build isolation torch is
-not importable, the ABI check is skipped, and a mismatched oneAPI silently
-produces a broken `.so` — see the SONAME note below):
+install from source. Set `TMS_PLATFORM=xpu` to force the XPU backend (otherwise
+`setup.py` only auto-detects it when neither `nvcc` nor `hipcc` is on `PATH`),
+and use `--no-build-isolation` so the build sees your installed `torch+xpu` and
+can match the `libsycl` major to it (under build isolation torch is not
+importable, the ABI match is skipped, and a mismatched oneAPI silently produces
+a broken `.so` — see the SONAME note below):
 
 ```bash
 # Prerequisites: a torch+xpu install, Intel oneAPI (icpx) + Level Zero headers.
 source /opt/intel/oneapi/setvars.sh          # put icpx on PATH (or set ICPX=...)
 
-pip install --no-build-isolation \
+TMS_PLATFORM=xpu pip install --no-build-isolation \
   "git+https://github.com/fzyzcjy/torch_memory_saver.git"
 # or, from a local checkout:
-pip install --no-build-isolation .
+TMS_PLATFORM=xpu pip install --no-build-isolation .
 ```
 
 > If the sourced oneAPI's `libsycl` major differs from your torch runtime's,
 > pin a matching compiler with
-> `ICPX=/opt/intel/oneapi/compiler/<ver>/bin/icpx pip install --no-build-isolation .`
+> `ICPX=/opt/intel/oneapi/compiler/<ver>/bin/icpx`.
 
 That's it — `import torch_memory_saver` then works exactly as on CUDA:
 
@@ -139,11 +140,10 @@ torch_memory_saver.pause("weights")    # physical memory returned to the device
 torch_memory_saver.resume("weights")   # re-committed at the same virtual address
 ```
 
-For a standalone build (e.g. when integrating into another package's build
-flow) you can also use the helper, which prints the resulting SONAME:
+There is also a convenience target equivalent to the command above:
 
 ```bash
-make build-xpu          # == bash scripts/build_xpu.sh
+make build-xpu
 ```
 
 #### Why no XPU wheel?
@@ -154,9 +154,9 @@ The built `.so` links `libsycl.so.<N>`, whose major **must match the
 the moment a user has a different torch-XPU build (a different oneAPI version
 produces a different `libsycl.so` major, and the mismatch fails to load with
 `undefined symbol: urDeviceWaitExp ... LIBUR_LOADER`). Building from source
-against the locally installed runtime sidesteps this; `scripts/build_xpu.sh`
-prints the linked SONAME so you can confirm the match
-(`objdump -p ...torch_memory_saver_hook_mode_torch*.so | grep libsycl`).
+against the locally installed runtime sidesteps this; confirm the linked SONAME
+matches with
+`objdump -p ...torch_memory_saver_hook_mode_torch*.so | grep libsycl`.
 
 #### Notes
 

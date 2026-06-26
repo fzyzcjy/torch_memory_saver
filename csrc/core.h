@@ -66,10 +66,6 @@ public:
         bool enable_disk_backup);
     cudaError_t free(void *ptr);
 
-    // Whether ptr is tracked by the VMM path (vs a passthrough device alloc).
-    // Used by the XPU torch-mode hook to route frees of non-region allocations.
-    bool is_managed(void *ptr);
-
     void pause(const std::string& tag);
     void resume(const std::string& tag);
     void set_memory_margin_bytes(uint64_t value) {
