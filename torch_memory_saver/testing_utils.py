@@ -32,6 +32,10 @@ def _xpu_used_memory(gpu_id=0):
     (tms_xpu_committed_bytes), which is driver-independent, drops to 0 on pause()
     and is restored on resume(). Falls back to the sysman-derived used bytes only
     when the committed-bytes symbol is unavailable (older builds).
+
+    NOTE: the two paths return DIFFERENT quantities -- saver-committed bytes vs
+    whole-device used bytes. This is fine for the delta-based pause/resume
+    assertions here, but the value is not a reliable absolute device-usage figure.
     """
     try:
         from torch_memory_saver import torch_memory_saver as _saver

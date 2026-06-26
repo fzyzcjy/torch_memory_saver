@@ -94,10 +94,14 @@ void tms_torch_free(void *ptr, ssize_t ssize, int device, cudaStream_t stream) {
               << std::endl;
 #endif
 #if !defined(USE_XPU)
-    // A region() tensor can be freed after its context exits, so we cannot
-    // assert is_interesting_region() here on the in-process (torch) path.
+    // Upstream CUDA/ROCm behavior: assert we are in an interesting region.
     SIMPLE_CHECK(thread_local_config.is_interesting_region(), "only support interesting region");
 #endif
+    // XPU is torch-mode only with a pool-scoped allocator, so this hook fires
+    // exactly for the region() tensors we allocated. Those are freed when they
+    // go out of scope, which can happen AFTER the region context has exited
+    // (is_interesting_region() back to false) -- hence no assert on XPU. The
+    // pointer is always VMM-managed here, so free() handles it directly.
     CUDA_ERROR_CHECK(TorchMemorySaver::instance().free(ptr));
 }
 }

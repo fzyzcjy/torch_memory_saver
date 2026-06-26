@@ -241,7 +241,11 @@ class _TorchMemorySaverImpl:
     def pause(self, tag: Optional[str]):
         if self._is_xpu:
             # Must not unmap physical pages while kernels are still touching
-            # them: zeVirtualMemUnmap on in-flight pages hangs the device.
+            # them: zeVirtualMemUnmap on in-flight pages hangs the device, so
+            # drain the device first. We sync the CURRENT device only; like the
+            # CUDA backend, cross-device synchronization is the caller's job.
+            # Call pause()/resume() with the region's device current -- the
+            # natural one-process-per-rank (one device) deployment already does.
             torch.xpu.synchronize()
         tag_bytes = tag.encode("utf-8") if tag else None
         self._binary_wrapper.cdll.tms_pause(tag_bytes)
@@ -250,12 +254,10 @@ class _TorchMemorySaverImpl:
         tag_bytes = tag.encode("utf-8") if tag else None
         self._binary_wrapper.cdll.tms_resume(tag_bytes)
         if self._is_xpu:
-            # After remapping, prime PyTorch's stream so the driver settles any
-            # paging/TLB work before user kernels touch the remapped addresses.
+            # After remapping, settle the current device's stream so the driver
+            # finishes any paging/TLB work before user kernels touch the remapped
+            # addresses. Current device only (see pause()).
             torch.xpu.synchronize()
-            dev = torch.xpu.current_device()
-            _dummy = torch.zeros(1, dtype=torch.uint8, device=f"xpu:{dev}")
-            del _dummy
 
     def get_cpu_backup(self, x: torch.Tensor, zero_copy: bool = False):
         assert x.is_cuda or x.is_xpu, f"{x.device=}"

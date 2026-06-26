@@ -46,10 +46,17 @@ def run(hook_mode: str):
     torch.xpu.set_device(d1)
     with torch_memory_saver.region(tag="t"):
         b = torch.full((256 * 1024 * 1024,), 1, dtype=torch.float32, device=f"xpu:{d1}")
-    torch.xpu.synchronize()
+    torch.xpu.synchronize(d0)
+    torch.xpu.synchronize(d1)
     alloc0, alloc1 = used_gib(d0), used_gib(d1)
     print(f"after alloc:  xpu:{d0}={alloc0:.2f} xpu:{d1}={alloc1:.2f} GiB committed")
 
+    # pause()/resume() drain only the CURRENT device; cross-device sync is the
+    # caller's responsibility (matches the CUDA backend). A single process here
+    # drives two devices, so we sync each before pausing. The realistic
+    # deployment is one process per rank (one device), where this is implicit.
+    torch.xpu.synchronize(d0)
+    torch.xpu.synchronize(d1)
     torch_memory_saver.pause("t")
     pause0, pause1 = used_gib(d0), used_gib(d1)
     print(f"after pause:  xpu:{d0}={pause0:.2f} xpu:{d1}={pause1:.2f} GiB committed")

@@ -203,7 +203,9 @@ class build_platform_ext(build_ext):
             self.compiler.set_executable("compiler_cxx", icpx)
             self.compiler.set_executable("linker_so", f"{icpx} -shared")
             for ext in self.extensions:
-                ext.extra_compile_args = ['-fPIC', '-fsycl', '-fsycl-targets=spir64']
+                # -std=c++17 explicitly: the backend uses structured bindings
+                # (auto &[ptr, metadata]); don't rely on icpx's default standard.
+                ext.extra_compile_args = ['-std=c++17', '-fPIC', '-fsycl', '-fsycl-targets=spir64']
                 ext.extra_link_args = ['-fsycl', '-fsycl-targets=spir64', '-shared']
         # For CUDA, use default compiler (no special setup needed)
 

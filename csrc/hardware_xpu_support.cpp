@@ -284,10 +284,18 @@ void xpu_pause(
       }
 
       ze_result_t rc_unmap = zeVirtualMemUnmap(ze_ctx, ptr, aligned);
+      if (rc_unmap != ZE_RESULT_SUCCESS) {
+        // Leave the allocation ACTIVE (do NOT destroy the physical handle):
+        // destroying it now would orphan the still-mapped VA, and the next
+        // resume's zeVirtualMemMap would fail on an already-mapped range,
+        // breaking the allocation permanently. Keeping it ACTIVE lets it be
+        // retried or freed cleanly.
+        XPU_ERR("pause zeVirtualMemUnmap failed: 0x" << std::hex << rc_unmap
+                                                     << "; keeping ACTIVE");
+        continue;
+      }
       ze_result_t rc_destroy =
           zePhysicalMemDestroy(ze_ctx, metadata.xpu.ze_phys);
-      if (rc_unmap != ZE_RESULT_SUCCESS)
-        XPU_ERR("pause zeVirtualMemUnmap failed: 0x" << std::hex << rc_unmap);
       if (rc_destroy != ZE_RESULT_SUCCESS)
         XPU_ERR("pause zePhysicalMemDestroy failed: 0x" << std::hex
                                                         << rc_destroy);

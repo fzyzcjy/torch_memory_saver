@@ -149,13 +149,13 @@ make build-xpu
 #### Why no XPU wheel?
 
 The built `.so` links `libsycl.so.<N>`, whose major **must match the
-`intel-sycl-rt` bundled with your `torch+xpu` wheel** (e.g. `torch 2.12.0+xpu` →
-`intel-sycl-rt 2026.0.x` → `libsycl.so.9`). A single prebuilt wheel would break
-the moment a user has a different torch-XPU build (a different oneAPI version
-produces a different `libsycl.so` major, and the mismatch fails to load with
-`undefined symbol: urDeviceWaitExp ... LIBUR_LOADER`). Building from source
-against the locally installed runtime sidesteps this; confirm the linked SONAME
-matches with
+`intel-sycl-rt` bundled with your `torch+xpu` wheel** (the major is set by the
+oneAPI you build with, e.g. oneAPI 2025.x → `libsycl.so.8`). A single prebuilt
+wheel would break the moment a user has a different torch-XPU build (a different
+oneAPI version produces a different `libsycl.so` major, and the mismatch fails
+to load with `undefined symbol: urDeviceWaitExp ... LIBUR_LOADER`). Building
+from source against the locally installed runtime sidesteps this; confirm the
+linked SONAME matches with
 `objdump -p ...torch_memory_saver_hook_mode_torch*.so | grep libsycl`.
 
 #### Notes
