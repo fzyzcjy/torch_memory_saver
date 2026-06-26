@@ -81,6 +81,11 @@ public:
         disk_backend_.set_dir(dir);
     }
 
+#if defined(USE_XPU)
+    // Committed physical bytes the saver holds on an XPU device (ACTIVE only).
+    uint64_t xpu_committed_bytes(int device_id);
+#endif
+
 private:
     TorchMemorySaver();
     ~TorchMemorySaver() = default;

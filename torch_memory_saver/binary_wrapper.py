@@ -45,3 +45,6 @@ def _setup_function_signatures(cdll):
     if hasattr(cdll, "tms_xpu_device_free_bytes"):
         cdll.tms_xpu_device_free_bytes.argtypes = [ctypes.c_int]
         cdll.tms_xpu_device_free_bytes.restype = ctypes.c_uint64
+    if hasattr(cdll, "tms_xpu_committed_bytes"):
+        cdll.tms_xpu_committed_bytes.argtypes = [ctypes.c_int]
+        cdll.tms_xpu_committed_bytes.restype = ctypes.c_uint64

@@ -190,5 +190,12 @@ void tms_xpu_prewarm_devices(int n_devices) {
 uint64_t tms_xpu_device_free_bytes(int device_id) {
     return XPUImplementation::xpu_device_free_bytes(device_id);
 }
+
+// Committed physical bytes the saver holds on an XPU device. Driver-independent
+// (sysman free-bytes is frozen/deprecated on newer drivers); used by tests to
+// verify real physical commit/release across pause/resume.
+uint64_t tms_xpu_committed_bytes(int device_id) {
+    return TorchMemorySaver::instance().xpu_committed_bytes(device_id);
+}
 #endif
 }

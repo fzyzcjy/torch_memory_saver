@@ -173,12 +173,12 @@ namespace CUDAUtils {
 #elif defined(USE_XPU)
     // On XPU a "device" is just the ordinal passed in by torch's pluggable
     // allocator. hardware_xpu_support.cpp resolves it to a SYCL/Level Zero
-    // device via sycl::device::get_devices(gpu)[ordinal].
-    static CUdevice cu_device_get(int device_ordinal) {
+    // device via the Level-Zero-filtered GPU device list (see l0_gpu_devices).
+    [[maybe_unused]] static CUdevice cu_device_get(int device_ordinal) {
         return static_cast<CUdevice>(device_ordinal);
     }
 
-    static CUdevice cu_ctx_get_device() {
+    [[maybe_unused]] static CUdevice cu_ctx_get_device() {
         // Only used by the preload hook, which XPU does not use (XPU is torch
         // hook mode only). Return device 0 as a harmless default.
         return 0;

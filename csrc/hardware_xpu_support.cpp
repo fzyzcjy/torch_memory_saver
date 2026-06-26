@@ -13,6 +13,19 @@
 #include <sycl/sycl.hpp>
 #include <sycl/ext/oneapi/backend/level_zero.hpp>
 
+// Intel XPU backend for torch_memory_saver using Level Zero Virtual Memory
+// Management (VMM). Implements the same pause/resume semantics as CUDA/ROCm
+// backends, but using Intel's Level Zero API instead.
+//
+// Architecture:
+//   - malloc:  zeVirtualMemReserve → zePhysicalMemCreate → zeVirtualMemMap
+//   - pause:   zeVirtualMemUnmap + zePhysicalMemDestroy (VA stays reserved)
+//   - resume:  zePhysicalMemCreate + zeVirtualMemMap (to same VA)
+//   - free:    unmap + destroy (if ACTIVE), then zeVirtualMemFree
+//
+// Functions return cudaError_t (typedef'd to int for XPU); ze_result_t is
+// translated to those codes at the boundary. See macro.h for the rationale.
+
 namespace {
 
 #ifdef TMS_DEBUG_LOG
@@ -73,6 +86,33 @@ struct PerDeviceContext {
   ze_device_handle_t ze_dev;
 };
 
+// On runtimes that expose the same physical GPUs through BOTH a Level-Zero and
+// an OpenCL SYCL platform, get_devices(gpu) returns a mixed list (e.g. 8 entries
+// for 4 GPUs). torch.xpu enumerates Level-Zero devices only, so we must filter
+// to the Level-Zero backend before indexing by a torch device ordinal;
+// otherwise an ordinal can land on an OpenCL device and get_native<level_zero>
+// fails ("Backends mismatch"). On old single-platform runtimes every GPU is
+// already Level-Zero, so this is an order-preserving no-op.
+const std::vector<sycl::device> &l0_gpu_devices() {
+  // Cache once populated. Do NOT memoize an empty result: a call that races
+  // ahead of SYCL/L0 device enumeration must be able to recover on a later
+  // call. All callers reach here under the get_device_context mutex, so the
+  // non-atomic pointer/contents are race-free in practice.
+  static std::vector<sycl::device> *cache = nullptr;
+  if (cache && !cache->empty())
+    return *cache;
+  if (!cache)
+    cache = new std::vector<sycl::device>(); // leaked; matches ctx_map pattern
+  cache->clear();
+  for (const auto &d :
+       sycl::device::get_devices(sycl::info::device_type::gpu)) {
+    if (d.get_backend() == sycl::backend::ext_oneapi_level_zero)
+      cache->push_back(d);
+  }
+  XPU_LOG("l0_gpu_devices: " << cache->size() << " Level-Zero GPU device(s)");
+  return *cache;
+}
+
 PerDeviceContext &get_device_context(int device_id) {
   static auto *ctx_map = new std::unordered_map<int, PerDeviceContext *>();
   static auto *ctx_mutex = new std::mutex();
@@ -82,8 +122,7 @@ PerDeviceContext &get_device_context(int device_id) {
   if (it != ctx_map->end())
     return *(it->second);
 
-  std::vector<sycl::device> devices =
-      sycl::device::get_devices(sycl::info::device_type::gpu);
+  const std::vector<sycl::device> &devices = l0_gpu_devices();
   if (device_id < 0 || device_id >= (int)devices.size())
     throw std::runtime_error("[torch_memory_saver:xpu] invalid XPU device id: " +
                              std::to_string(device_id));
@@ -415,6 +454,22 @@ uint64_t xpu_device_free_bytes(int device_id) {
     XPU_ERR("xpu_device_free_bytes exception: " << e.what());
     return 0;
   }
+}
+
+uint64_t xpu_committed_bytes(
+    int device_id,
+    std::unordered_map<void *, AllocationMetadata> &allocation_metadata,
+    std::mutex &allocator_metadata_mutex) {
+  const std::lock_guard<std::mutex> lock(allocator_metadata_mutex);
+  uint64_t total = 0;
+  for (const auto &kv : allocation_metadata) {
+    const AllocationMetadata &metadata = kv.second;
+    if ((int)metadata.device != device_id)
+      continue;
+    if (metadata.state == AllocationState::ACTIVE)
+      total += metadata.aligned_size;
+  }
+  return total;
 }
 
 } // namespace XPUImplementation

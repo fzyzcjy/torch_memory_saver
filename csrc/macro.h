@@ -66,16 +66,32 @@
 #define TMS_ROCM_LEGACY_CHUNKED 0
 
 #elif defined(USE_XPU)
-// Intel XPU (Level Zero) backend. There is no CUDA/HIP runtime here, so we map
-// the handful of CUDA spellings used by the shared (device-agnostic) code onto
-// plain types. The actual device work lives in hardware_xpu_support.cpp and is
-// expressed directly in Level Zero / SYCL, not through these aliases.
+// Intel XPU (Level Zero) backend compatibility layer.
+//
+// This backend does NOT use CUDA/HIP. Instead, it implements pause/resume via
+// Level Zero VMM (zeVirtualMemMap/Unmap, zePhysicalMemCreate/Destroy) in
+// hardware_xpu_support.cpp. However, to share the orchestration code in core.cpp
+// (which is platform-agnostic), we map the CUDA-style type names onto plain C
+// types. This avoids duplicating the entire allocator logic for each platform.
+//
+// Why use cudaError_t instead of ze_result_t?
+//   - The shared code (core.h, core.cpp) defines a platform-agnostic interface
+//     using cudaError_t return values and CUdevice for device IDs.
+//   - On CUDA: these map to actual CUDA runtime types.
+//   - On ROCm: #define cudaError_t hipError_t (HIP's equivalent).
+//   - On XPU: we typedef them to plain int (just error codes: 0=success, etc.)
+//   - This allows one implementation of TorchMemorySaver to work across all
+//     platforms, while the actual GPU work uses native APIs in each backend.
+//
+// The XPU implementation in hardware_xpu_support.cpp uses real Level Zero APIs
+// (ze_result_t, etc.) and translates them to these compatibility codes at the
+// boundary. Users never see these types—they call the Python API.
 #include <cstddef>
 
 typedef int CUresult;
-typedef int cudaError_t;
-typedef int CUdevice;        // a device ordinal on XPU
-typedef void *cudaStream_t;  // unused on XPU (pluggable allocator passes it through)
+typedef int cudaError_t;     // Just an error code (0=success, 2=OOM, 17=bad ptr)
+typedef int CUdevice;        // Device ordinal (0, 1, 2, ...)
+typedef void *cudaStream_t;  // Unused on XPU (pluggable allocator is global)
 
 #define CUDA_SUCCESS 0
 #define cudaSuccess 0

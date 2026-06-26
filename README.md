@@ -104,38 +104,39 @@ CUDA/HIP-specific). Pauseable CUDA-graph capture is not available on XPU.
 #### Installation
 
 XPU is **not** shipped as a prebuilt PyPI wheel (see "Why no XPU wheel" below);
-install from source. `setup.py` auto-detects XPU when `icpx` is on `PATH`, so a
-normal `pip install` builds the XPU backend with no extra flags:
+install from source. `setup.py` auto-detects XPU when `icpx` is on `PATH`.
+Always use `--no-build-isolation` so the build sees your installed `torch+xpu`
+and can verify the `libsycl` major matches it (under build isolation torch is
+not importable, the ABI check is skipped, and a mismatched oneAPI silently
+produces a broken `.so` — see the SONAME note below):
 
 ```bash
-# Prerequisites: Intel oneAPI (icpx) + Level Zero headers, and a torch+xpu build.
+# Prerequisites: a torch+xpu install, Intel oneAPI (icpx) + Level Zero headers.
 source /opt/intel/oneapi/setvars.sh          # put icpx on PATH (or set ICPX=...)
 
-pip install git+https://github.com/fzyzcjy/torch_memory_saver.git
+pip install --no-build-isolation \
+  "git+https://github.com/fzyzcjy/torch_memory_saver.git"
 # or, from a local checkout:
-pip install .
+pip install --no-build-isolation .
 ```
 
-> The build itself does not need torch (it links only SYCL + Level Zero), so
-> build isolation is fine. XPU is auto-detected from `icpx` on `PATH`; if your
-> oneAPI version differs from the one matching your torch runtime, pin it with
-> `ICPX=/opt/intel/oneapi/compiler/<ver>/bin/icpx pip install .` (see the SONAME
-> note below).
+> If the sourced oneAPI's `libsycl` major differs from your torch runtime's,
+> pin a matching compiler with
+> `ICPX=/opt/intel/oneapi/compiler/<ver>/bin/icpx pip install --no-build-isolation .`
 
 That's it — `import torch_memory_saver` then works exactly as on CUDA:
 
 ```python
 import torch
-from torch_memory_saver import TorchMemorySaver
+from torch_memory_saver import torch_memory_saver
 
-saver = TorchMemorySaver()
-saver.hook_mode = "torch"  # required on XPU
+torch_memory_saver.hook_mode = "torch"  # required on XPU
 
-with saver.region(tag="weights"):
-    x = torch.empty(1_000_000_000, dtype=torch.uint8, device="xpu")
+with torch_memory_saver.region(tag="weights"):
+    x = torch.full((1_000_000_000,), 100, dtype=torch.uint8, device="xpu")
 
-saver.pause("weights")    # physical memory returned to the device
-saver.resume("weights")   # re-committed at the same virtual address
+torch_memory_saver.pause("weights")    # physical memory returned to the device
+torch_memory_saver.resume("weights")   # re-committed at the same virtual address
 ```
 
 For a standalone build (e.g. when integrating into another package's build
@@ -148,10 +149,10 @@ make build-xpu          # == bash scripts/build_xpu.sh
 #### Why no XPU wheel?
 
 The built `.so` links `libsycl.so.<N>`, whose major **must match the
-`intel-sycl-rt` bundled with your `torch+xpu` wheel** (e.g. `torch 2.11.0+xpu` →
-`intel-sycl-rt 2025.3.x` → `libsycl.so.8`). A single prebuilt wheel would break
-the moment a user has a different torch-XPU build (a 2026.x oneAPI produces
-`libsycl.so.9`, and the mismatch fails to load with
+`intel-sycl-rt` bundled with your `torch+xpu` wheel** (e.g. `torch 2.12.0+xpu` →
+`intel-sycl-rt 2026.0.x` → `libsycl.so.9`). A single prebuilt wheel would break
+the moment a user has a different torch-XPU build (a different oneAPI version
+produces a different `libsycl.so` major, and the mismatch fails to load with
 `undefined symbol: urDeviceWaitExp ... LIBUR_LOADER`). Building from source
 against the locally installed runtime sidesteps this; `scripts/build_xpu.sh`
 prints the linked SONAME so you can confirm the match
