@@ -23,7 +23,9 @@ def _find_platform_home(platform):
             else:
                 home = '/usr/local/cuda'
     elif platform == "xpu":
-        # Find oneAPI home (for icpx + SYCL headers/libs)
+        # Kept for symmetry with cuda/hip only. The XPU branch of
+        # _create_ext_modules derives include/lib from _icpx_oneapi_include_lib()
+        # (the actual build compiler), so this return value is not used for XPU.
         home = os.environ.get('ONEAPI_ROOT')
         if home is None:
             icpx = _find_icpx()

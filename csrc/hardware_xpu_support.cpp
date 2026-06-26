@@ -57,9 +57,12 @@ ze_device_handle_t ze_device_of(const sycl::device &dev) {
 }
 
 size_t ze_alloc_granularity(ze_context_handle_t ze_ctx,
-                            ze_device_handle_t ze_dev) {
+                            ze_device_handle_t ze_dev, size_t size) {
+  // Query with the actual allocation size: the driver returns the page size
+  // recommended for that size (larger allocations may want larger pages), per
+  // the zeVirtualMemQueryPageSize contract. Falls back to 2 MiB on failure.
   size_t page_size = 0;
-  ze_result_t rc = zeVirtualMemQueryPageSize(ze_ctx, ze_dev, 1, &page_size);
+  ze_result_t rc = zeVirtualMemQueryPageSize(ze_ctx, ze_dev, size, &page_size);
   if (rc != ZE_RESULT_SUCCESS || page_size == 0)
     page_size = 2 * 1024 * 1024; // fallback 2 MiB
   return page_size;
@@ -152,7 +155,7 @@ cudaError_t xpu_malloc(
     std::mutex &allocator_metadata_mutex) {
   try {
     PerDeviceContext &pdc = get_device_context(device);
-    size_t granularity = ze_alloc_granularity(pdc.ze_ctx, pdc.ze_dev);
+    size_t granularity = ze_alloc_granularity(pdc.ze_ctx, pdc.ze_dev, size);
     size_t aligned = align_up(size, granularity);
 
     // 1. Reserve virtual address (stays fixed for the allocation's lifetime).
