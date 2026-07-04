@@ -23,10 +23,22 @@ class TorchMemorySaver:
         self._impl: Optional[_TorchMemorySaverImpl] = None
 
     @contextmanager
-    def region(self, tag: str = _TAG_DEFAULT, enable_cpu_backup: bool = False):
-        """Context manager for memory saving with optional tag"""
+    def region(self, tag: str = _TAG_DEFAULT, enable_cpu_backup: bool = False,
+               enable_disk_backup: bool = False, disk_backup_dir: Optional[str] = None):
+        """Context manager for memory saving with optional tag.
+
+        When enable_disk_backup=True, paused memory is spilled to node-local
+        disk (disk_backup_dir) instead of a pinned CPU buffer, streamed in fixed
+        chunks so host RAM stays bounded. Mutually exclusive with
+        enable_cpu_backup. Use for the case where even CPU offload does not fit.
+        """
         self._ensure_initialized()
-        with self._impl.region(tag=tag, enable_cpu_backup=enable_cpu_backup):
+        assert not (enable_cpu_backup and enable_disk_backup), \
+            "enable_cpu_backup and enable_disk_backup are mutually exclusive"
+        if disk_backup_dir is not None:
+            self.set_disk_backup_dir(disk_backup_dir)
+        with self._impl.region(tag=tag, enable_cpu_backup=enable_cpu_backup,
+                               enable_disk_backup=enable_disk_backup):
             yield
 
     @contextmanager
@@ -87,6 +99,12 @@ class TorchMemorySaver:
         self._ensure_initialized()
         return self._impl.get_cpu_backup(x, zero_copy=zero_copy)
 
+    def set_disk_backup_dir(self, path: str):
+        """Set the node-local directory for disk backup files (created if needed)."""
+        self._ensure_initialized()
+        os.makedirs(path, exist_ok=True)
+        self._impl._binary_wrapper.cdll.tms_set_disk_backup_dir(path.encode("utf-8"))
+
     def _ensure_initialized(self):
         if self._impl is not None:
             return
@@ -109,12 +127,13 @@ class _TorchMemorySaverImpl:
             atexit.register(self._mem_pools.clear)
 
     @contextmanager
-    def region(self, tag: str, enable_cpu_backup: bool):
+    def region(self, tag: str, enable_cpu_backup: bool, enable_disk_backup: bool = False):
         # For hook_mode=preload, we need this b/c https://github.com/fzyzcjy/torch_memory_saver/pull/20#issuecomment-3047099047
         # (For hook_mode=torch we may not need it, but currently our primary usage is hook_mode=preload, thus we do this for simplicity)
-        mem_pool = self._mem_pools[(tag, enable_cpu_backup)]
+        mem_pool = self._mem_pools[(tag, enable_cpu_backup, enable_disk_backup)]
         with torch.cuda.use_mem_pool(mem_pool):
-            with self._with_region_config(tag=tag, enable_cpu_backup=enable_cpu_backup):
+            with self._with_region_config(tag=tag, enable_cpu_backup=enable_cpu_backup,
+                                          enable_disk_backup=enable_disk_backup):
                 yield
 
     @contextmanager
@@ -125,23 +144,28 @@ class _TorchMemorySaverImpl:
                 yield
 
     @contextmanager
-    def _with_region_config(self, tag: str, enable_cpu_backup: bool):
+    def _with_region_config(self, tag: str, enable_cpu_backup: bool, enable_disk_backup: bool = False):
         cdll = self._binary_wrapper.cdll
         orig_tag = cdll.tms_get_current_tag().decode("utf-8")
         orig_interesting_region = cdll.tms_get_interesting_region()
         orig_enable_cpu_backup = cdll.tms_get_enable_cpu_backup()
+        orig_enable_disk_backup = cdll.tms_get_enable_disk_backup()
 
-        self._binary_wrapper.set_config(tag=tag, interesting_region=True, enable_cpu_backup=enable_cpu_backup)
+        self._binary_wrapper.set_config(tag=tag, interesting_region=True,
+                                        enable_cpu_backup=enable_cpu_backup,
+                                        enable_disk_backup=enable_disk_backup)
         try:
             yield
         finally:
             assert cdll.tms_get_interesting_region()
             assert cdll.tms_get_enable_cpu_backup() == enable_cpu_backup
+            assert cdll.tms_get_enable_disk_backup() == enable_disk_backup
             assert cdll.tms_get_current_tag().decode("utf-8") == tag
             self._binary_wrapper.set_config(
                 tag=orig_tag,
                 interesting_region=orig_interesting_region,
                 enable_cpu_backup=orig_enable_cpu_backup,
+                enable_disk_backup=orig_enable_disk_backup,
             )
 
     @contextmanager

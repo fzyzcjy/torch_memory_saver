@@ -3,14 +3,82 @@
 #include "macro.h"
 #include "api_forwarder.h"
 
-TorchMemorySaver::TorchMemorySaver() {}
+#include <algorithm>
+#include <cstdlib>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/types.h>
+
+TorchMemorySaver::TorchMemorySaver() {
+    const char* dir = std::getenv("TMS_DISK_BACKUP_DIR");
+    disk_backup_dir_ = (dir != nullptr) ? std::string(dir) : std::string("/tmp");
+
+    const char* chunk_mb = std::getenv("TMS_DISK_BACKUP_CHUNK_MB");
+    size_t mb = (chunk_mb != nullptr) ? std::strtoull(chunk_mb, nullptr, 10) : 256;
+    if (mb == 0) mb = 256;
+    disk_chunk_bytes_ = mb * 1024ull * 1024ull;
+}
+
+void TorchMemorySaver::ensure_disk_staging_() {
+    if (disk_staging_ == nullptr) {
+        CUDA_ERROR_CHECK(cudaMallocHost(&disk_staging_, disk_chunk_bytes_));
+        SIMPLE_CHECK(disk_staging_ != nullptr, "failed to allocate pinned disk staging buffer");
+    }
+}
+
+void TorchMemorySaver::disk_offload_(void* ptr, AllocationMetadata& metadata) {
+    ensure_disk_staging_();
+
+    // Open + preallocate the per-allocation file exactly once, then keep the fd
+    // for the allocation's lifetime and overwrite in place on every pause.
+    if (metadata.disk_fd < 0) {
+        metadata.disk_path = disk_backup_dir_ + "/tms_" + std::to_string((long)getpid())
+            + "_" + std::to_string(disk_backup_counter_++) + ".bin";
+        metadata.disk_fd = open(metadata.disk_path.c_str(), O_RDWR | O_CREAT, 0600);
+        SIMPLE_CHECK(metadata.disk_fd >= 0, "failed to open disk backup file");
+        int fret = posix_fallocate(metadata.disk_fd, 0, (off_t) metadata.size);
+        SIMPLE_CHECK(fret == 0, "posix_fallocate on disk backup file failed");
+    }
+
+    size_t offset = 0;
+    while (offset < metadata.size) {
+        size_t n = std::min(disk_chunk_bytes_, metadata.size - offset);
+        CUDA_ERROR_CHECK(cudaMemcpy(disk_staging_, (uint8_t*) ptr + offset, n, cudaMemcpyDeviceToHost));
+        size_t written = 0;
+        while (written < n) {
+            ssize_t w = pwrite(metadata.disk_fd, (uint8_t*) disk_staging_ + written, n - written, (off_t)(offset + written));
+            SIMPLE_CHECK(w > 0, "pwrite to disk backup file failed");
+            written += (size_t) w;
+        }
+        offset += n;
+    }
+}
+
+void TorchMemorySaver::disk_reload_(void* ptr, AllocationMetadata& metadata) {
+    ensure_disk_staging_();
+    SIMPLE_CHECK(metadata.disk_fd >= 0, "disk backup fd invalid on resume (was it ever paused?)");
+
+    size_t offset = 0;
+    while (offset < metadata.size) {
+        size_t n = std::min(disk_chunk_bytes_, metadata.size - offset);
+        size_t got = 0;
+        while (got < n) {
+            ssize_t r = pread(metadata.disk_fd, (uint8_t*) disk_staging_ + got, n - got, (off_t)(offset + got));
+            SIMPLE_CHECK(r > 0, "pread from disk backup file failed");
+            got += (size_t) r;
+        }
+        CUDA_ERROR_CHECK(cudaMemcpy((uint8_t*) ptr + offset, disk_staging_, n, cudaMemcpyHostToDevice));
+        offset += n;
+    }
+    // Keep fd + file for the next pause (in-place overwrite => bounded disk usage).
+}
 
 TorchMemorySaver &TorchMemorySaver::instance() {
     static TorchMemorySaver instance;
     return instance;
 }
 
-cudaError_t TorchMemorySaver::malloc(void **ptr, CUdevice device, size_t size, const std::string& tag, const bool enable_cpu_backup) {
+cudaError_t TorchMemorySaver::malloc(void **ptr, CUdevice device, size_t size, const std::string& tag, const bool enable_cpu_backup, const bool enable_disk_backup) {
 #if TMS_ROCM_LEGACY_CHUNKED
     return ROCmHIPImplementation::rocm_malloc(ptr, device, size, tag, enable_cpu_backup, allocation_metadata_, allocator_metadata_mutex_);
 
@@ -44,7 +112,8 @@ cudaError_t TorchMemorySaver::malloc(void **ptr, CUdevice device, size_t size, c
         const std::lock_guard<std::mutex> lock(allocator_metadata_mutex_);
         allocation_metadata_.emplace(
             *ptr,
-            AllocationMetadata{size, device, tag, AllocationState::ACTIVE, enable_cpu_backup, nullptr, allocHandle}
+            AllocationMetadata{size, device, tag, AllocationState::ACTIVE, enable_cpu_backup, nullptr,
+                               enable_disk_backup, -1, std::string(), allocHandle}
         );
     }
 
@@ -84,6 +153,12 @@ cudaError_t TorchMemorySaver::free(void *ptr) {
     if (nullptr != metadata.cpu_backup) {
         CUDA_ERROR_CHECK(cudaFreeHost(metadata.cpu_backup));
         metadata.cpu_backup = nullptr;
+    }
+
+    if (metadata.enable_disk_backup && metadata.disk_fd >= 0) {
+        close(metadata.disk_fd);
+        unlink(metadata.disk_path.c_str());
+        metadata.disk_fd = -1;
     }
 
 #ifdef TMS_DEBUG_LOG
@@ -127,6 +202,8 @@ void TorchMemorySaver::pause(const std::string& tag) {
             SIMPLE_CHECK(metadata.cpu_backup != nullptr, "cpu_backup should not be nullptr");
             // TODO may use cudaMemcpyAsync if needed
             CUDA_ERROR_CHECK(cudaMemcpy(metadata.cpu_backup, ptr, metadata.size, cudaMemcpyDeviceToHost));
+        } else if (metadata.enable_disk_backup) {
+            disk_offload_(ptr, metadata);
         }
 
         CURESULT_CHECK(cuMemUnmap((CUdeviceptr) ptr, metadata.size));
@@ -184,6 +261,8 @@ void TorchMemorySaver::resume(const std::string& tag) {
             // (users may want to lazily free to reduce re-alloc time)
             CUDA_ERROR_CHECK(cudaFreeHost(metadata.cpu_backup));
             metadata.cpu_backup = nullptr;
+        } else if (metadata.enable_disk_backup) {
+            disk_reload_(ptr, metadata);
         }
 
 #ifdef TMS_DEBUG_LOG
@@ -216,6 +295,12 @@ uint8_t* TorchMemorySaver::get_cpu_backup_pointer(const uint8_t* query_gpu_ptr, 
 
         if ((ptr <= query_gpu_ptr) && (query_gpu_ptr + query_size <= ptr + total_size)) {
             const size_t offset = query_gpu_ptr - ptr;
+            // Disk-backed allocations have no CPU-resident copy to hand back;
+            // callers must fall back to the (resumed) GPU tensor. v1 does not
+            // support reading disk-backed weights while paused.
+            if (metadata.enable_disk_backup) {
+                return nullptr;
+            }
             if (metadata.state == AllocationState::ACTIVE) {
                 return nullptr;
             } else {
