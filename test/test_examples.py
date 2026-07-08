@@ -19,7 +19,6 @@ from examples import (
     multi_device_torch_mode,
     training_engine,
     nested_region,
-    xpu_multi_device,
 )
 
 # XPU only supports hook_mode='torch' (in-process pluggable allocator);
@@ -29,7 +28,6 @@ _HOOK_MODES = ["torch"] if _IS_XPU else ["preload", "torch"]
 
 # Skip reason for tests that exercise CUDA/HIP-only paths on XPU.
 _skip_on_xpu = pytest.mark.skipif(_IS_XPU, reason="CUDA/HIP-only path, not supported on XPU")
-_xpu_only = pytest.mark.skipif(not _IS_XPU, reason="XPU-only test")
 
 
 @pytest.mark.parametrize("hook_mode", _HOOK_MODES)
@@ -58,14 +56,16 @@ def test_disk_backup(hook_mode):
 @pytest.mark.parametrize("hook_mode", _HOOK_MODES)
 def test_multi_device(hook_mode):
     # This example allocates on a non-current device within a single region,
-    # which only the preload (global cudaMalloc) hook can capture. On XPU use
-    # test_xpu_multi_device, which pins each device at alloc time.
+    # which only the preload (global cudaMalloc) hook can capture. For the
+    # torch-mode path use test_multi_device_torch_mode, which pins each device
+    # at alloc time.
     _test_core(multi_device.run, hook_mode=hook_mode)
 
 
-@_xpu_only
-def test_xpu_multi_device():
-    _test_core(xpu_multi_device.run, hook_mode="torch")
+def test_multi_device_torch_mode():
+    # Torch-mode multi-device (pins each device at alloc time), so it runs on
+    # both CUDA and XPU. Skips at runtime if <2 devices are present.
+    _test_core(multi_device_torch_mode.run, hook_mode="torch")
 
 
 @_skip_on_xpu

@@ -46,114 +46,6 @@ def _find_platform_home(platform):
     return home
 
 
-def _find_icpx():
-    """Return the absolute path to icpx (Intel oneAPI SYCL compiler).
-
-    Honors $ICPX, then $PATH, then $ONEAPI_ROOT and common install locations.
-    """
-    explicit = os.environ.get("ICPX")
-    if explicit and os.path.isfile(explicit):
-        return explicit
-    found = shutil.which("icpx")
-    if found:
-        return found
-    oneapi_root = os.environ.get("ONEAPI_ROOT")
-    search_roots = ([oneapi_root] if oneapi_root else []) + ['/opt/intel/oneapi']
-    for root in search_roots:
-        guess = os.path.join(root, 'compiler', 'latest', 'bin', 'icpx')
-        if os.path.isfile(guess):
-            return guess
-    return None
-
-
-def _sycl_major_from_version_hpp(include_root):
-    """__LIBSYCL_MAJOR_VERSION from <include_root>/sycl/version.hpp, or None."""
-    import re
-    try:
-        text = open(os.path.join(include_root, "sycl", "version.hpp")).read()
-    except OSError:
-        return None
-    m = re.search(r"__LIBSYCL_MAJOR_VERSION\s+(\d+)", text)
-    return int(m.group(1)) if m else None
-
-
-def _icpx_sycl_major(icpx):
-    """libsycl major that `icpx` builds against (NEEDED libsycl.so.<major>), or None.
-
-    compiler/<ver>/bin/icpx -> compiler/<ver>/include/sycl/version.hpp.
-    """
-    if not icpx:
-        return None
-    base = os.path.dirname(os.path.dirname(os.path.realpath(icpx)))  # compiler/<ver>
-    return _sycl_major_from_version_hpp(os.path.join(base, "include"))
-
-
-def _torch_sycl_major():
-    """libsycl major the installed torch.xpu needs (from libtorch_xpu.so), or None."""
-    import re
-    try:
-        import torch
-    except Exception:
-        return None
-    lib = os.path.join(os.path.dirname(torch.__file__), "lib", "libtorch_xpu.so")
-    try:
-        out = subprocess.run(["readelf", "-d", lib], capture_output=True, text=True).stdout
-    except Exception:
-        return None
-    m = re.search(r"libsycl\.so\.(\d+)", out)
-    return int(m.group(1)) if m else None
-
-
-_RESOLVED_XPU_ICPX = None
-
-
-def _resolve_xpu_icpx():
-    """icpx whose libsycl major matches torch (e.g. torch 2.12+xpu needs so.8 -> oneAPI 2025.x).
-
-    The built .so links libsycl.so.<major>, which MUST match the libsycl torch
-    loads, or it corrupts the SYCL runtime at load (segfault / garbage device
-    counts). If the default icpx already matches (or torch's need is unknown, or
-    ICPX is pinned) it is used as-is; otherwise we pick an installed
-    /opt/intel/oneapi/compiler/<ver>/bin/icpx whose major matches.
-    """
-    global _RESOLVED_XPU_ICPX
-    if _RESOLVED_XPU_ICPX is not None:
-        return _RESOLVED_XPU_ICPX
-    import glob
-    icpx = _find_icpx()
-    if icpx is None:
-        raise RuntimeError(
-            "Cannot find icpx (Intel oneAPI C++ compiler). Install oneAPI, "
-            "source setvars.sh, or set ICPX=/path/to/icpx."
-        )
-    want = _torch_sycl_major()
-    # Auto-switch only when needed and the user has not pinned ICPX explicitly.
-    if want is not None and not os.environ.get("ICPX") and _icpx_sycl_major(icpx) != want:
-        match = next(
-            (c for c in sorted(glob.glob("/opt/intel/oneapi/compiler/*/bin/icpx"), reverse=True)
-             if _icpx_sycl_major(c) == want),
-            None,
-        )
-        if match is None:
-            raise RuntimeError(
-                f"No Intel oneAPI compiler builds against libsycl.so.{want} (needed by your "
-                f"torch+xpu). Install a matching oneAPI, or set ICPX=/path/to/matching/icpx."
-            )
-        print(f"[torch_memory_saver] using {match} to match torch's libsycl.so.{want}")
-        icpx = match
-    _RESOLVED_XPU_ICPX = icpx
-    return icpx
-
-
-def _icpx_oneapi_include_lib(icpx):
-    """(include_dirs, library_dirs) from icpx's own compiler dir, so headers+libs
-    match the compiler we picked regardless of the sourced ONEAPI_ROOT."""
-    base = os.path.dirname(os.path.dirname(os.path.realpath(icpx)))  # compiler/<ver>
-    include_dirs = [os.path.join(base, "include"), os.path.join(base, "include", "sycl")]
-    library_dirs = [os.path.join(base, "lib")]
-    return include_dirs, library_dirs
-
-
 def _detect_platform():
     """Detect whether to use CUDA, HIP or XPU based on available tools."""
     # Allow explicit override.
@@ -214,9 +106,8 @@ class build_platform_ext(build_ext):
         build_ext.build_extensions(self)
 
     def finalize_options(self):
-        # Must set CC/CXX BEFORE super().finalize_options(): that is where
-        # setuptools calls new_compiler() + customize_compiler(), reading CC/CXX
-        # from os.environ. Setting them in build_extensions() is too late.
+        # Set CC/CXX before super() (it reads them from os.environ via
+        # new_compiler); doing it in build_extensions() is too late.
         if self.platform == "xpu":
             icpx = _resolve_xpu_icpx()
             os.environ["CC"] = icpx
@@ -255,10 +146,8 @@ def _create_ext_modules(platform):
     elif platform == "xpu":
         # Add Intel XPU (Level Zero) source file.
         sources.append('csrc/hardware_xpu_support.cpp')
-        # Derive headers + libs from the ABI-matched icpx we will actually build
-        # with (see _resolve_xpu_icpx), NOT from a possibly-different sourced
-        # ONEAPI_ROOT. This is what keeps the compiled libsycl SONAME aligned
-        # with the torch runtime even when the system default oneAPI differs.
+        # Headers/libs from the ABI-matched icpx (not a sourced ONEAPI_ROOT), so
+        # the compiled libsycl SONAME matches the torch runtime.
         icpx = _resolve_xpu_icpx()
         include_dirs, library_dirs = _icpx_oneapi_include_lib(icpx)
         # Level Zero headers (ze_api.h / zes_api.h) usually live in the system
@@ -320,6 +209,114 @@ def _create_ext_modules(platform):
     ]
 
     return ext_modules
+
+
+# ============================== For Intel XPU ==============================
+def _find_icpx():
+    """Return the absolute path to icpx (Intel oneAPI SYCL compiler).
+
+    Honors $ICPX, then $PATH, then $ONEAPI_ROOT and common install locations.
+    """
+    explicit = os.environ.get("ICPX")
+    if explicit and os.path.isfile(explicit):
+        return explicit
+    found = shutil.which("icpx")
+    if found:
+        return found
+    oneapi_root = os.environ.get("ONEAPI_ROOT")
+    search_roots = ([oneapi_root] if oneapi_root else []) + ['/opt/intel/oneapi']
+    for root in search_roots:
+        guess = os.path.join(root, 'compiler', 'latest', 'bin', 'icpx')
+        if os.path.isfile(guess):
+            return guess
+    return None
+
+
+# Match the icpx we build with to the libsycl the installed torch loads, and
+# derive its include/lib dirs, so the .so links the same libsycl ABI at runtime.
+def _sycl_major_from_version_hpp(include_root):
+    """__LIBSYCL_MAJOR_VERSION from <include_root>/sycl/version.hpp, or None."""
+    import re
+    try:
+        text = open(os.path.join(include_root, "sycl", "version.hpp")).read()
+    except OSError:
+        return None
+    m = re.search(r"__LIBSYCL_MAJOR_VERSION\s+(\d+)", text)
+    return int(m.group(1)) if m else None
+
+
+def _icpx_sycl_major(icpx):
+    """libsycl major that `icpx` builds against (NEEDED libsycl.so.<major>), or None.
+
+    compiler/<ver>/bin/icpx -> compiler/<ver>/include/sycl/version.hpp.
+    """
+    if not icpx:
+        return None
+    base = os.path.dirname(os.path.dirname(os.path.realpath(icpx)))  # compiler/<ver>
+    return _sycl_major_from_version_hpp(os.path.join(base, "include"))
+
+
+def _torch_sycl_major():
+    """libsycl major the installed torch.xpu needs (from libtorch_xpu.so), or None."""
+    import re
+    try:
+        import torch
+    except Exception:
+        return None
+    lib = os.path.join(os.path.dirname(torch.__file__), "lib", "libtorch_xpu.so")
+    try:
+        out = subprocess.run(["readelf", "-d", lib], capture_output=True, text=True).stdout
+    except Exception:
+        return None
+    m = re.search(r"libsycl\.so\.(\d+)", out)
+    return int(m.group(1)) if m else None
+
+
+_RESOLVED_XPU_ICPX = None
+
+
+def _resolve_xpu_icpx():
+    """Pick an icpx whose libsycl major matches torch (mismatch corrupts the SYCL
+    runtime at load). Use the default icpx if it matches, torch's need is unknown,
+    or ICPX is pinned; else scan installed oneAPI compilers for a match.
+    """
+    global _RESOLVED_XPU_ICPX
+    if _RESOLVED_XPU_ICPX is not None:
+        return _RESOLVED_XPU_ICPX
+    import glob
+    icpx = _find_icpx()
+    if icpx is None:
+        raise RuntimeError(
+            "Cannot find icpx (Intel oneAPI C++ compiler). Install oneAPI, "
+            "source setvars.sh, or set ICPX=/path/to/icpx."
+        )
+    want = _torch_sycl_major()
+    # Auto-switch only when needed and the user has not pinned ICPX explicitly.
+    if want is not None and not os.environ.get("ICPX") and _icpx_sycl_major(icpx) != want:
+        match = next(
+            (c for c in sorted(glob.glob("/opt/intel/oneapi/compiler/*/bin/icpx"), reverse=True)
+             if _icpx_sycl_major(c) == want),
+            None,
+        )
+        if match is None:
+            raise RuntimeError(
+                f"No Intel oneAPI compiler builds against libsycl.so.{want} (needed by your "
+                f"torch+xpu). Install a matching oneAPI, or set ICPX=/path/to/matching/icpx."
+            )
+        print(f"[torch_memory_saver] using {match} to match torch's libsycl.so.{want}")
+        icpx = match
+    _RESOLVED_XPU_ICPX = icpx
+    return icpx
+
+
+def _icpx_oneapi_include_lib(icpx):
+    """(include_dirs, library_dirs) from icpx's own compiler dir, so headers+libs
+    match the compiler we picked regardless of the sourced ONEAPI_ROOT."""
+    base = os.path.dirname(os.path.dirname(os.path.realpath(icpx)))  # compiler/<ver>
+    include_dirs = [os.path.join(base, "include"), os.path.join(base, "include", "sycl")]
+    library_dirs = [os.path.join(base, "lib")]
+    return include_dirs, library_dirs
+# =====================================================================
 
 
 # Detect platform and set up accordingly

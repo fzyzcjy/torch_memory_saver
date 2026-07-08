@@ -11,14 +11,11 @@ import torch
 
 from .binary_wrapper import BinaryWrapper
 from .hooks.base import HookUtilBase, HookMode
+from .utils import is_xpu
 
 logger = logging.getLogger(__name__)
 
 _TAG_DEFAULT = "default"
-
-
-def _is_xpu() -> bool:
-    return hasattr(torch, "xpu") and torch.xpu.is_available()
 
 
 class TorchMemorySaver:
@@ -116,7 +113,7 @@ class TorchMemorySaver:
 
 class _TorchMemorySaverImpl:
     def __init__(self, hook_mode: HookMode = "preload"):
-        self._is_xpu = _is_xpu()
+        self._is_xpu = is_xpu()
         if self._is_xpu:
             assert hook_mode == "torch", (
                 "XPU only supports hook_mode='torch' (in-process pluggable "
@@ -126,31 +123,27 @@ class _TorchMemorySaverImpl:
         self._hook_util = HookUtilBase.create(hook_mode=hook_mode)
         self._binary_wrapper = BinaryWrapper(path_binary=self._hook_util.get_path_binary())
 
+        # torch.cuda / torch.xpu share the MemPool / use_mem_pool / current_device
+        # / synchronize API; resolve the right module once instead of branching
+        # per platform.
+        self._device_module = torch.get_device_module()
+
         if self._is_xpu:
-            # Prewarm per-device SYCL contexts BEFORE registering the pluggable
-            # allocator: creating a sycl::context inside an allocator callback
-            # can deadlock the SYCL runtime.
+            # Prewarm per-device SYCL contexts before registering the allocator.
             if hasattr(self._binary_wrapper.cdll, "tms_xpu_prewarm_devices"):
                 self._binary_wrapper.cdll.tms_xpu_prewarm_devices(
-                    torch.xpu.device_count()
+                    self._device_module.device_count()
                 )
-            self._mem_pools = defaultdict(
-                lambda: torch.xpu.MemPool(allocator=self._hook_util.get_allocator())
-            )
-            self._use_mem_pool = torch.xpu.use_mem_pool
-        else:
-            self._mem_pools = defaultdict(
-                lambda: torch.cuda.MemPool(allocator=self._hook_util.get_allocator())
-            )
-            self._use_mem_pool = torch.cuda.use_mem_pool
+
+        self._mem_pools = defaultdict(
+            lambda: self._device_module.MemPool(allocator=self._hook_util.get_allocator())
+        )
+        self._use_mem_pool = self._device_module.use_mem_pool
 
         _sanity_checks()
         if torch.version.hip or self._is_xpu:
-            # Unlike CUDA where cuMem* are Driver API calls, HIP/SYCL put everything in
-            # user-space libraries whose C++ static destructors may run before MemPool's
-            # destructor during process exit ("static destruction order fiasco"). By
-            # clearing _mem_pools in an atexit handler, we ensure MemPool destruction
-            # (and thus the runtime API calls) happens while the runtime is still alive.
+            # HIP/SYCL runtime static dtors may run before MemPool's at exit
+            # (destruction-order fiasco); free pools via atexit while it's alive.
             atexit.register(self._mem_pools.clear)
 
     @contextmanager
@@ -167,11 +160,8 @@ class _TorchMemorySaverImpl:
         # For hook_mode=preload, we need this b/c https://github.com/fzyzcjy/torch_memory_saver/pull/20#issuecomment-3047099047
         # (For hook_mode=torch we may not need it, but currently our primary usage is hook_mode=preload, thus we do this for simplicity)
         #
-        # A torch MemPool is bound to the device that is current when it is
-        # created; reusing it for an allocation on another device silently
-        # bypasses the custom allocator. So the pool key must include the device
-        # to support multiple devices in one process (e.g. several TP ranks, or
-        # tests that touch multiple GPUs).
+        # A MemPool is bound to the current device at creation; key by device so
+        # multi-device processes (e.g. TP ranks) don't reuse another's pool.
         key = (tag, enable_cpu_backup, enable_disk_backup, self._current_device())
         mem_pool = self._mem_pools[key]
         with self._use_mem_pool(mem_pool):
@@ -180,9 +170,7 @@ class _TorchMemorySaverImpl:
                 yield
 
     def _current_device(self) -> int:
-        if self._is_xpu:
-            return torch.xpu.current_device()
-        return torch.cuda.current_device()
+        return self._device_module.current_device()
 
     @contextmanager
     def cuda_graph(self, cuda_graph, pool, stream, capture_error_mode, tag: str, enable_cpu_backup: bool):
@@ -246,7 +234,7 @@ class _TorchMemorySaverImpl:
             # CUDA backend, cross-device synchronization is the caller's job.
             # Call pause()/resume() with the region's device current -- the
             # natural one-process-per-rank (one device) deployment already does.
-            torch.xpu.synchronize()
+            self._device_module.synchronize()
         tag_bytes = tag.encode("utf-8") if tag else None
         self._binary_wrapper.cdll.tms_pause(tag_bytes)
 
@@ -257,7 +245,7 @@ class _TorchMemorySaverImpl:
             # After remapping, settle the current device's stream so the driver
             # finishes any paging/TLB work before user kernels touch the remapped
             # addresses. Current device only (see pause()).
-            torch.xpu.synchronize()
+            self._device_module.synchronize()
 
     def get_cpu_backup(self, x: torch.Tensor, zero_copy: bool = False):
         assert x.is_cuda or x.is_xpu, f"{x.device=}"

@@ -3,18 +3,14 @@ import logging
 import torch
 
 from torch_memory_saver.hooks.base import HookUtilBase
-from torch_memory_saver.utils import get_binary_path_from_package
+from torch_memory_saver.utils import is_xpu, get_binary_path_from_package
 
 logger = logging.getLogger(__name__)
 
 
-def _is_xpu() -> bool:
-    return hasattr(torch, "xpu") and torch.xpu.is_available()
-
-
 class HookUtilModeTorch(HookUtilBase):
     def __init__(self):
-        if _is_xpu():
+        if is_xpu():
             from torch.xpu.memory import XPUPluggableAllocator
 
             PluggableAllocator = XPUPluggableAllocator

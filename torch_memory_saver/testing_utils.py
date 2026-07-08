@@ -2,9 +2,7 @@
 
 import torch
 
-
-def is_xpu() -> bool:
-    return hasattr(torch, "xpu") and torch.xpu.is_available()
+from torch_memory_saver.utils import is_xpu
 
 
 def get_device() -> str:

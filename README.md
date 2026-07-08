@@ -103,13 +103,13 @@ CUDA/HIP-specific). Pauseable CUDA-graph capture is not available on XPU.
 
 #### Installation
 
-XPU is **not** shipped as a prebuilt PyPI wheel (see "Why no XPU wheel" below);
-install from source. Set `TMS_PLATFORM=xpu` to force the XPU backend (otherwise
-`setup.py` only auto-detects it when neither `nvcc` nor `hipcc` is on `PATH`),
-and use `--no-build-isolation` so the build sees your installed `torch+xpu` and
-can match the `libsycl` major to it (under build isolation torch is not
-importable, the ABI match is skipped, and a mismatched oneAPI silently produces
-a broken `.so` — see the SONAME note below):
+XPU is not shipped as a prebuilt PyPI wheel; install from source. Set
+`TMS_PLATFORM=xpu` to force the XPU backend (otherwise `setup.py` only
+auto-detects it when neither `nvcc` nor `hipcc` is on `PATH`), and use
+`--no-build-isolation` so the build sees your installed `torch+xpu` and can
+match the `libsycl` major to it (under build isolation torch is not importable,
+the ABI match is skipped, and a mismatched oneAPI silently produces a broken
+`.so`):
 
 ```bash
 # Prerequisites: a torch+xpu install, Intel oneAPI (icpx) + Level Zero headers.
@@ -125,43 +125,13 @@ TMS_PLATFORM=xpu pip install --no-build-isolation .
 > pin a matching compiler with
 > `ICPX=/opt/intel/oneapi/compiler/<ver>/bin/icpx`.
 
-That's it — `import torch_memory_saver` then works exactly as on CUDA:
-
-```python
-import torch
-from torch_memory_saver import torch_memory_saver
-
-torch_memory_saver.hook_mode = "torch"  # required on XPU
-
-with torch_memory_saver.region(tag="weights"):
-    x = torch.full((1_000_000_000,), 100, dtype=torch.uint8, device="xpu")
-
-torch_memory_saver.pause("weights")    # physical memory returned to the device
-torch_memory_saver.resume("weights")   # re-committed at the same virtual address
-```
-
-There is also a convenience target equivalent to the command above:
-
-```bash
-make build-xpu
-```
-
-#### Why no XPU wheel?
-
-The built `.so` links `libsycl.so.<N>`, whose major **must match the
-`intel-sycl-rt` bundled with your `torch+xpu` wheel** (the major is set by the
-oneAPI you build with, e.g. oneAPI 2025.x → `libsycl.so.8`). A single prebuilt
-wheel would break the moment a user has a different torch-XPU build (a different
-oneAPI version produces a different `libsycl.so` major, and the mismatch fails
-to load with `undefined symbol: urDeviceWaitExp ... LIBUR_LOADER`). Building
-from source against the locally installed runtime sidesteps this; confirm the
-linked SONAME matches with
-`objdump -p ...torch_memory_saver_hook_mode_torch*.so | grep libsycl`.
+Then use `region` / `pause` / `resume` as on CUDA (see the examples above), with
+`hook_mode = "torch"` and `device="xpu"`. `make build-xpu` runs the same install.
 
 #### Notes
 
 Verifying that memory was actually released: `torch.xpu.memory_allocated()` (and
-even `torch.xpu.mem_get_info()`) do **not** reflect physical pages released by
+even `torch.xpu.mem_get_info()`) do not reflect physical pages released by
 `zeVirtualMemUnmap`. Use sysman (`ZES_ENABLE_SYSMAN=1`) to observe real device
 memory.
 
