@@ -1,5 +1,6 @@
 #pragma once
 #include <iostream>
+#include <limits>
 #include <vector>
 #include "macro.h"
 
@@ -94,6 +95,11 @@ namespace CUDAUtils {
             return hipSuccess;
         }
 
+        static size_t cu_mem_get_allocation_size(size_t size, CUdevice device) {
+            (void)device;
+            return size;
+        }
+
         static void cu_mem_set_access(void *ptr, size_t size, CUdevice device) {
             hipMemAccessDesc accessDesc = {};
             accessDesc.location.type = hipMemLocationTypeDevice;
@@ -104,7 +110,7 @@ namespace CUDAUtils {
     #endif
 
 #elif defined(USE_CUDA)
-    static cudaError_t cu_mem_create(CUmemGenericAllocationHandle *alloc_handle, size_t size, CUdevice device) {
+    static CUmemAllocationProp cu_mem_get_allocation_prop(CUdevice device) {
         CUmemAllocationProp prop = {};
         prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
         prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
@@ -115,6 +121,24 @@ namespace CUDAUtils {
         if (flag) {  // support GPUDirect RDMA if possible
             prop.allocFlags.gpuDirectRDMACapable = 1;
         }
+
+        return prop;
+    }
+
+    static size_t cu_mem_get_allocation_size(size_t size, CUdevice device) {
+        const CUmemAllocationProp prop = cu_mem_get_allocation_prop(device);
+        size_t granularity = 0;
+        CURESULT_CHECK(cuMemGetAllocationGranularity(
+            &granularity, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM));
+        SIMPLE_CHECK(granularity > 0, "cuMemGetAllocationGranularity returned zero");
+        SIMPLE_CHECK(
+            size <= std::numeric_limits<size_t>::max() - (granularity - 1),
+            "allocation size overflow while applying CUDA VMM granularity");
+        return ((size + granularity - 1) / granularity) * granularity;
+    }
+
+    static cudaError_t cu_mem_create(CUmemGenericAllocationHandle *alloc_handle, size_t size, CUdevice device) {
+        const CUmemAllocationProp prop = cu_mem_get_allocation_prop(device);
 
         CUresult ret = cuMemCreate(alloc_handle, size, &prop, 0);
         if (ret == CUDA_ERROR_OUT_OF_MEMORY) {

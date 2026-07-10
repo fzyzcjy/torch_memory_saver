@@ -35,6 +35,7 @@ struct AllocationMetadata {
     std::vector<size_t> chunk_sizes;
 #else
     // CUDA and ROCm 7.0+: Single allocation handle
+    size_t allocation_size;
     CUmemGenericAllocationHandle allocHandle;
 #endif
 };
