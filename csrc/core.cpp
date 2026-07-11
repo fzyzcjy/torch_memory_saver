@@ -131,10 +131,14 @@ void TorchMemorySaver::pause(const std::string& tag) {
 
         CURESULT_CHECK(cuMemUnmap((CUdeviceptr) ptr, metadata.size));
         CURESULT_CHECK(cuMemRelease(metadata.allocHandle));
+#if defined(USE_ROCM)
         // On ROCm 7.2, cuMemUnmap + cuMemRelease do not return the physical pages to
         // the driver while the virtual address range stays reserved (they do on ROCm
-        // 7.0). Free the VA to actually release the memory, then immediately re-reserve
-        // the SAME address as a placeholder so the pointer stays valid for resume().
+        // 7.0 and on CUDA). Free the VA to actually release the memory, then immediately
+        // re-reserve the SAME address as a placeholder so the pointer stays valid for
+        // resume(). ROCm-only: CUDA already frees the physical on release, so it does
+        // not need this and must not be exposed to the (small) free->re-reserve window
+        // where another thread could grab the address.
         CURESULT_CHECK(cuMemAddressFree((CUdeviceptr) ptr, metadata.size));
         {
             CUdeviceptr reserved = 0;
@@ -147,6 +151,7 @@ void TorchMemorySaver::pause(const std::string& tag) {
                 exit(1);
             }
         }
+#endif
 
         metadata.state = AllocationState::PAUSED;
 
