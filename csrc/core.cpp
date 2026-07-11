@@ -131,6 +131,22 @@ void TorchMemorySaver::pause(const std::string& tag) {
 
         CURESULT_CHECK(cuMemUnmap((CUdeviceptr) ptr, metadata.size));
         CURESULT_CHECK(cuMemRelease(metadata.allocHandle));
+        // On ROCm 7.2, cuMemUnmap + cuMemRelease do not return the physical pages to
+        // the driver while the virtual address range stays reserved (they do on ROCm
+        // 7.0). Free the VA to actually release the memory, then immediately re-reserve
+        // the SAME address as a placeholder so the pointer stays valid for resume().
+        CURESULT_CHECK(cuMemAddressFree((CUdeviceptr) ptr, metadata.size));
+        {
+            CUdeviceptr reserved = 0;
+            CURESULT_CHECK(cuMemAddressReserve(&reserved, metadata.size, 0, (CUdeviceptr) ptr, 0));
+            if ((void*) reserved != ptr) {
+                std::cerr << "[torch_memory_saver.cpp] pause() could not re-reserve the same VA:"
+                          << " want=" << ptr << " got=" << (void*) reserved
+                          << " file=" << __FILE__ << " func=" << __func__ << " line=" << __LINE__
+                          << std::endl;
+                exit(1);
+            }
+        }
 
         metadata.state = AllocationState::PAUSED;
 
