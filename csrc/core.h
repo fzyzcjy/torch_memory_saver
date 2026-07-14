@@ -21,7 +21,7 @@ enum class AllocationState {
 };
 
 struct AllocationMetadata {
-    size_t size;
+    size_t raw_size;
     CUdevice device;
     std::string tag;
     AllocationState state;
@@ -44,7 +44,7 @@ class TorchMemorySaver {
 public:
     static TorchMemorySaver& instance();
 
-    cudaError_t malloc(void** ptr, CUdevice device, size_t size, const std::string& tag, bool enable_cpu_backup);
+    cudaError_t malloc(void** ptr, CUdevice device, size_t raw_size, const std::string& tag, bool enable_cpu_backup);
     cudaError_t free(void *ptr);
 
     void pause(const std::string& tag);
