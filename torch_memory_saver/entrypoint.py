@@ -130,7 +130,12 @@ class _TorchMemorySaverImpl:
     def region(self, tag: str, enable_cpu_backup: bool, enable_disk_backup: bool = False):
         # For hook_mode=preload, we need this b/c https://github.com/fzyzcjy/torch_memory_saver/pull/20#issuecomment-3047099047
         # (For hook_mode=torch we may not need it, but currently our primary usage is hook_mode=preload, thus we do this for simplicity)
-        mem_pool = self._mem_pools[(tag, enable_cpu_backup, enable_disk_backup)]
+        #
+        # A MemPool is bound to the current device at creation; key by device so a
+        # process using several devices (e.g. multiple TP ranks) doesn't reuse one
+        # device's pool for allocations on another (which bypasses the allocator).
+        key = (tag, enable_cpu_backup, enable_disk_backup, torch.cuda.current_device())
+        mem_pool = self._mem_pools[key]
         with torch.cuda.use_mem_pool(mem_pool):
             with self._with_region_config(tag=tag, enable_cpu_backup=enable_cpu_backup,
                                           enable_disk_backup=enable_disk_backup):
