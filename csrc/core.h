@@ -27,11 +27,7 @@ struct AllocationMetadata {
     AllocationState state;
     bool enable_cpu_backup;
     void* cpu_backup;
-    // Disk backup: when enabled, the paused allocation is spilled to a fixed
-    // node-local file instead of a pinned CPU buffer. disk_fd is opened lazily
-    // on the first pause and reused for the allocation's lifetime; the file is
-    // preallocated once to `size` and overwritten in place every pause (so disk
-    // usage never grows across RL steps).
+    // Node-local backing file for disk-backed pause; fd opened lazily and reused.
     bool enable_disk_backup;
     int disk_fd;
     std::string disk_path;
@@ -71,9 +67,7 @@ private:
     TorchMemorySaver(const TorchMemorySaver&) = delete;
     TorchMemorySaver& operator=(const TorchMemorySaver&) = delete;
 
-    // Lazily allocate the shared pinned staging buffer used to stream
-    // GPU<->disk in fixed-size chunks (bounds host RAM regardless of the total
-    // amount offloaded). Callers must hold allocator_metadata_mutex_.
+    // Shared pinned staging buffer for GPU<->disk streaming. Callers must hold allocator_metadata_mutex_.
     void ensure_disk_staging_();
     void disk_offload_(void* ptr, AllocationMetadata& metadata);
     void disk_reload_(void* ptr, AllocationMetadata& metadata);

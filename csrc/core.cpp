@@ -29,8 +29,6 @@ void TorchMemorySaver::ensure_disk_staging_() {
 void TorchMemorySaver::disk_offload_(void* ptr, AllocationMetadata& metadata) {
     ensure_disk_staging_();
 
-    // Open + preallocate the per-allocation file exactly once, then keep the fd
-    // for the allocation's lifetime and overwrite in place on every pause.
     if (metadata.disk_fd < 0) {
         metadata.disk_path = disk_backup_dir_ + "/tms_" + std::to_string((long)getpid())
             + "_" + std::to_string(disk_backup_counter_++) + ".bin";
@@ -70,7 +68,7 @@ void TorchMemorySaver::disk_reload_(void* ptr, AllocationMetadata& metadata) {
         CUDA_ERROR_CHECK(cudaMemcpy((uint8_t*) ptr + offset, disk_staging_, n, cudaMemcpyHostToDevice));
         offset += n;
     }
-    // Keep fd + file for the next pause (in-place overwrite => bounded disk usage).
+    // fd stays open for the next pause.
 }
 
 TorchMemorySaver &TorchMemorySaver::instance() {
@@ -295,9 +293,7 @@ uint8_t* TorchMemorySaver::get_cpu_backup_pointer(const uint8_t* query_gpu_ptr, 
 
         if ((ptr <= query_gpu_ptr) && (query_gpu_ptr + query_size <= ptr + total_size)) {
             const size_t offset = query_gpu_ptr - ptr;
-            // Disk-backed allocations have no CPU-resident copy to hand back;
-            // callers must fall back to the (resumed) GPU tensor. v1 does not
-            // support reading disk-backed weights while paused.
+            // Disk-backed allocations have no CPU-resident copy; callers must use the resumed GPU tensor.
             if (metadata.enable_disk_backup) {
                 return nullptr;
             }
