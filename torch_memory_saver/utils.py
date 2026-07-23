@@ -46,8 +46,8 @@ def _detect_cuda_major() -> int:
         try:
             ctypes.CDLL(f"libcudart.so.{major}")
             return major
-        except OSError:
-            continue
+        except OSError as e:
+            logger.warning("probe for libcudart.so.%s failed: %s", major, e)
 
     raise RuntimeError(
         f"torch_memory_saver: could not detect CUDA runtime. Tried torch.version.cuda "

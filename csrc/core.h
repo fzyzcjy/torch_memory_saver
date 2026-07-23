@@ -8,6 +8,7 @@
 #include <vector>
 #include "utils.h"
 #include "macro.h"
+#include "disk_backend.h"
 
 #if TMS_ROCM_LEGACY_CHUNKED
 #include "hardware_amd_support.h"
@@ -27,10 +28,8 @@ struct AllocationMetadata {
     AllocationState state;
     bool enable_cpu_backup;
     void* cpu_backup;
-    // Node-local backing file for disk-backed pause; fd opened lazily and reused.
     bool enable_disk_backup;
-    int disk_fd;
-    std::string disk_path;
+    DiskBackupSlot disk;
 
 #if TMS_ROCM_LEGACY_CHUNKED
     // ROCm 6.x: Chunked allocation workaround
@@ -58,7 +57,7 @@ public:
     uint8_t* get_cpu_backup_pointer(const uint8_t* query_gpu_ptr, uint64_t query_size);
     void set_disk_backup_dir(const std::string& dir) {
         const std::lock_guard<std::mutex> lock(allocator_metadata_mutex_);
-        disk_backup_dir_ = dir;
+        disk_backend_.set_dir(dir);
     }
 
 private:
@@ -67,18 +66,10 @@ private:
     TorchMemorySaver(const TorchMemorySaver&) = delete;
     TorchMemorySaver& operator=(const TorchMemorySaver&) = delete;
 
-    // Shared pinned staging buffer for GPU<->disk streaming. Callers must hold allocator_metadata_mutex_.
-    void ensure_disk_staging_();
-    void disk_offload_(void* ptr, AllocationMetadata& metadata);
-    void disk_reload_(void* ptr, AllocationMetadata& metadata);
-
     std::mutex allocator_metadata_mutex_;
     std::unordered_map<void*, AllocationMetadata> allocation_metadata_;
     std::atomic<uint64_t> memory_margin_bytes_ = 0;
 
-    // Disk-backup state (guarded by allocator_metadata_mutex_).
-    std::string disk_backup_dir_;
-    size_t disk_chunk_bytes_ = 0;
-    void* disk_staging_ = nullptr;      // pinned host, size == disk_chunk_bytes_
-    uint64_t disk_backup_counter_ = 0;  // unique suffix per allocation
+    // Guarded by allocator_metadata_mutex_.
+    DiskBackend disk_backend_;
 };
