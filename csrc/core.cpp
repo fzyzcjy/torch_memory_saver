@@ -3,7 +3,13 @@
 #include "macro.h"
 #include "api_forwarder.h"
 
-TorchMemorySaver::TorchMemorySaver() {}
+TorchMemorySaver::TorchMemorySaver() {
+#ifdef USE_CUDA
+    const char* retain_cpu_backup = std::getenv("TMS_RETAIN_CPU_BACKUP");
+    retain_cpu_backup_.store(
+        retain_cpu_backup != nullptr && std::string(retain_cpu_backup) == "1");
+#endif
+}
 
 TorchMemorySaver &TorchMemorySaver::instance() {
     static TorchMemorySaver instance;
@@ -151,6 +157,7 @@ void TorchMemorySaver::resume(const std::string& tag) {
 
 #else
     const std::lock_guard <std::mutex> lock(allocator_metadata_mutex_);
+    const bool retain_cpu_backup = retain_cpu_backup_.load();
 
     for (auto it = allocation_metadata_.begin(); it != allocation_metadata_.end(); ++it) {
         void *ptr = it->first;
@@ -180,10 +187,10 @@ void TorchMemorySaver::resume(const std::string& tag) {
             // TODO may use cudaMemcpyAsync if needed
             CUDA_ERROR_CHECK(cudaMemcpy(ptr, metadata.cpu_backup, metadata.size, cudaMemcpyHostToDevice));
 
-            // TODO may provide a flag to choose whether to free immediately
-            // (users may want to lazily free to reduce re-alloc time)
-            CUDA_ERROR_CHECK(cudaFreeHost(metadata.cpu_backup));
-            metadata.cpu_backup = nullptr;
+            if (!retain_cpu_backup) {
+                CUDA_ERROR_CHECK(cudaFreeHost(metadata.cpu_backup));
+                metadata.cpu_backup = nullptr;
+            }
         }
 
 #ifdef TMS_DEBUG_LOG
@@ -197,6 +204,18 @@ void TorchMemorySaver::resume(const std::string& tag) {
 
         metadata.state = AllocationState::ACTIVE;
         metadata.allocHandle = newAllocHandle;
+    }
+#endif
+}
+
+void TorchMemorySaver::release_cpu_backups() {
+#ifdef USE_CUDA
+    const std::lock_guard<std::mutex> lock(allocator_metadata_mutex_);
+    for (auto& [ptr, metadata] : allocation_metadata_) {
+        if (metadata.cpu_backup != nullptr) {
+            CUDA_ERROR_CHECK(cudaFreeHost(metadata.cpu_backup));
+            metadata.cpu_backup = nullptr;
+        }
     }
 #endif
 }

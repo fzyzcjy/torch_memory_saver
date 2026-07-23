@@ -27,6 +27,12 @@ def test_cpu_backup(hook_mode):
 
 
 @pytest.mark.parametrize("hook_mode", _HOOK_MODES)
+def test_cpu_backup_retain_from_env(hook_mode):
+    with change_env("TMS_RETAIN_CPU_BACKUP", "1"):
+        _test_core(cpu_backup.run_retain_from_env, hook_mode=hook_mode)
+
+
+@pytest.mark.parametrize("hook_mode", _HOOK_MODES)
 def test_multi_device(hook_mode):
     _test_core(multi_device.run, hook_mode=hook_mode)
 

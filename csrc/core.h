@@ -51,6 +51,13 @@ public:
     void set_memory_margin_bytes(uint64_t value) {
         memory_margin_bytes_.store(value);
     }
+    void set_retain_cpu_backup(bool value) {
+        retain_cpu_backup_.store(value);
+    }
+    bool get_retain_cpu_backup() const {
+        return retain_cpu_backup_.load();
+    }
+    void release_cpu_backups();
     uint8_t* get_cpu_backup_pointer(const uint8_t* query_gpu_ptr, uint64_t query_size);
 
 private:
@@ -62,4 +69,5 @@ private:
     std::mutex allocator_metadata_mutex_;
     std::unordered_map<void*, AllocationMetadata> allocation_metadata_;
     std::atomic<uint64_t> memory_margin_bytes_ = 0;
+    std::atomic<bool> retain_cpu_backup_ = false;
 };

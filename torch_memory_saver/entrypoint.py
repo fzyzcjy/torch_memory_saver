@@ -83,6 +83,16 @@ class TorchMemorySaver:
         self._ensure_initialized()
         self._impl._binary_wrapper.cdll.set_memory_margin_bytes(value)
 
+    @property
+    def retain_cpu_backup(self) -> bool:
+        self._ensure_initialized()
+        return self._impl._binary_wrapper.cdll.tms_get_retain_cpu_backup()
+
+    @retain_cpu_backup.setter
+    def retain_cpu_backup(self, value: bool):
+        self._ensure_initialized()
+        self._impl._binary_wrapper.cdll.tms_set_retain_cpu_backup(value)
+
     def get_cpu_backup(self, x: torch.Tensor, zero_copy: bool = False):
         self._ensure_initialized()
         return self._impl.get_cpu_backup(x, zero_copy=zero_copy)
@@ -107,6 +117,15 @@ class _TorchMemorySaverImpl:
             # destruction order fiasco"). By clearing _mem_pools in an atexit handler, we ensure MemPool 
             # destruction (and thus HIP API calls) happens while the HIP/HSA runtime is still fully alive.
             atexit.register(self._mem_pools.clear)
+        else:
+            # Destroy pools while CUDA and the allocator configuration are
+            # alive, then release any backups not owned by a Python MemPool.
+            atexit.register(self._cleanup_cuda_at_exit)
+
+    def _cleanup_cuda_at_exit(self):
+        self._binary_wrapper.cdll.tms_set_interesting_region(True)
+        self._mem_pools.clear()
+        self._binary_wrapper.cdll.tms_release_cpu_backups()
 
     @contextmanager
     def region(self, tag: str, enable_cpu_backup: bool):

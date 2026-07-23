@@ -114,6 +114,26 @@ void set_memory_margin_bytes(uint64_t value) {
     TorchMemorySaver::instance().set_memory_margin_bytes(value);
 }
 
+void tms_set_retain_cpu_backup(bool retain_cpu_backup) {
+#ifdef USE_ROCM
+    SIMPLE_CHECK(!retain_cpu_backup, "retained CPU backup policy is CUDA-only");
+#else
+    TorchMemorySaver::instance().set_retain_cpu_backup(retain_cpu_backup);
+#endif
+}
+
+bool tms_get_retain_cpu_backup() {
+#ifdef USE_ROCM
+    return false;
+#else
+    return TorchMemorySaver::instance().get_retain_cpu_backup();
+#endif
+}
+
+void tms_release_cpu_backups() {
+    TorchMemorySaver::instance().release_cpu_backups();
+}
+
 void tms_pause(const char* tag) {
     std::string tag_str = (tag != nullptr) ? std::string(tag) : "";
     TorchMemorySaver::instance().pause(tag_str);
