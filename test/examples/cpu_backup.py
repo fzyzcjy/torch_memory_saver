@@ -72,6 +72,10 @@ def run(hook_mode: str):
             first_pointer = first_backup.data_ptr()
             assert other[0].item() == 80 + device
             torch_memory_saver.resume(tag=f"retained_{device}")
+            assert (
+                torch_memory_saver.get_cpu_backup(selected, zero_copy=True).data_ptr()
+                == first_pointer
+            )
 
             selected.fill_(50 + device)
             torch_memory_saver.pause(tag=f"retained_{device}")

@@ -236,7 +236,9 @@ uint8_t* TorchMemorySaver::get_cpu_backup_pointer(const uint8_t* query_gpu_ptr, 
         if ((ptr <= query_gpu_ptr) && (query_gpu_ptr + query_size <= ptr + total_size)) {
             const size_t offset = query_gpu_ptr - ptr;
             if (metadata.state == AllocationState::ACTIVE) {
-                return nullptr;
+                return metadata.cpu_backup == nullptr
+                    ? nullptr
+                    : (uint8_t*) metadata.cpu_backup + offset;
             } else {
                 SIMPLE_CHECK(nullptr != metadata.cpu_backup,
                     "get_cpu_backup_pointer: found paused allocation but cpu_backup does not exist, do you forget to enable cpu backup");
