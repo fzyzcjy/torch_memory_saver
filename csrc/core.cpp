@@ -5,9 +5,7 @@
 
 TorchMemorySaver::TorchMemorySaver() {
 #ifdef USE_CUDA
-    const char* retain_cpu_backup = std::getenv("TMS_RETAIN_CPU_BACKUP");
-    retain_cpu_backup_.store(
-        retain_cpu_backup != nullptr && std::string(retain_cpu_backup) == "1");
+    retain_cpu_backup_.store(get_bool_env_var("TMS_RETAIN_CPU_BACKUP"));
 #endif
 }
 

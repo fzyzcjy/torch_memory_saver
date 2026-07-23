@@ -39,24 +39,6 @@ def run(hook_mode: str):
     assert tensor_with_backup[:3].tolist() == [10, 10, 10]
     assert tensor_without_backup[:3].tolist() != [20, 20, 20]
 
-    # Retention keeps the pinned allocation across resume. A later pause must
-    # refresh its contents rather than restoring the previous snapshot.
-    torch_memory_saver.retain_cpu_backup = True
-    tensor_with_backup.fill_(11)
-    torch_memory_saver.pause()
-    retained = torch_memory_saver.get_cpu_backup(tensor_with_backup)
-    assert retained[:3].tolist() == [11, 11, 11]
-    torch_memory_saver.resume()
-    assert tensor_with_backup[:3].tolist() == [11, 11, 11]
-
-    tensor_with_backup.fill_(12)
-    torch_memory_saver.pause()
-    retained = torch_memory_saver.get_cpu_backup(tensor_with_backup)
-    assert retained[:3].tolist() == [12, 12, 12]
-    torch_memory_saver.resume()
-    assert tensor_with_backup[:3].tolist() == [12, 12, 12]
-    torch_memory_saver.retain_cpu_backup = False
-
     # Tags remain independent, and retained host storage is reused at the same
     # address while its bytes are refreshed. Exercise every visible device.
     for device in range(torch.cuda.device_count()):

@@ -2,10 +2,27 @@ import sys
 from types import SimpleNamespace
 
 from torch_memory_saver import utils
+from torch_memory_saver.entrypoint import _TorchMemorySaverImpl
 
 
 def _fake_torch(cuda=None, hip=None):
     return SimpleNamespace(version=SimpleNamespace(cuda=cuda, hip=hip))
+
+
+def test_cuda_exit_cleanup_order():
+    calls = []
+    impl = object.__new__(_TorchMemorySaverImpl)
+    impl._binary_wrapper = SimpleNamespace(
+        cdll=SimpleNamespace(
+            tms_set_interesting_region=lambda value: calls.append(("region", value)),
+            tms_release_cpu_backups=lambda: calls.append(("release",)),
+        )
+    )
+    impl._mem_pools = SimpleNamespace(clear=lambda: calls.append(("clear",)))
+
+    impl._cleanup_cuda_at_exit()
+
+    assert calls == [("region", True), ("clear",), ("release",)]
 
 
 def test_get_binary_path_from_package_uses_unsuffixed_rocm_binary(monkeypatch, tmp_path):
