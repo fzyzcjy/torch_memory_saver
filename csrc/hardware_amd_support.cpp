@@ -187,7 +187,7 @@ namespace ROCmHIPImplementation {
             const std::lock_guard<std::mutex> lock(allocator_metadata_mutex);
             allocation_metadata.emplace(
                 *ptr,
-                AllocationMetadata{size, device, tag, AllocationState::ACTIVE, enable_cpu_backup, nullptr, aligned_size, std::move(allocHandles), std::move(chunk_sizes)}
+                AllocationMetadata{size, device, tag, AllocationState::ACTIVE, enable_cpu_backup, nullptr, false, DiskBackupSlot{}, aligned_size, std::move(allocHandles), std::move(chunk_sizes)}
             );
         }
 
