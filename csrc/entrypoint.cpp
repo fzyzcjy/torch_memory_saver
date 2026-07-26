@@ -76,9 +76,7 @@ void *tms_torch_malloc(ssize_t size, int device, cudaStream_t stream) {
               << " size=" << size << " device=" << device << " stream=" << stream
               << std::endl;
 #endif
-    // The torch MemPool allocator is pool-scoped: this hook only fires for
-    // allocations made inside a region() (i.e. within use_mem_pool), so we are
-    // always in an interesting region here.
+    // Pool-scoped: fires only inside a region() (use_mem_pool), so always interesting.
     SIMPLE_CHECK(thread_local_config.is_interesting_region(), "only support interesting region");
     void *ptr;
     CUDA_ERROR_CHECK(TorchMemorySaver::instance().malloc(
@@ -94,14 +92,11 @@ void tms_torch_free(void *ptr, ssize_t ssize, int device, cudaStream_t stream) {
               << std::endl;
 #endif
 #if !defined(USE_XPU)
-    // Upstream CUDA/ROCm behavior: assert we are in an interesting region.
+    // CUDA/ROCm: must be in an interesting region.
     SIMPLE_CHECK(thread_local_config.is_interesting_region(), "only support interesting region");
 #endif
-    // XPU is torch-mode only with a pool-scoped allocator, so this hook fires
-    // exactly for the region() tensors we allocated. Those are freed when they
-    // go out of scope, which can happen AFTER the region context has exited
-    // (is_interesting_region() back to false) -- hence no assert on XPU. The
-    // pointer is always VMM-managed here, so free() handles it directly.
+    // No assert on XPU: a region() tensor may be freed after its region exits
+    // (interesting-region false again); ptr is always VMM-managed, so free() handles it.
     CUDA_ERROR_CHECK(TorchMemorySaver::instance().free(ptr));
 }
 }
@@ -152,14 +147,18 @@ void set_memory_margin_bytes(uint64_t value) {
     TorchMemorySaver::instance().set_memory_margin_bytes(value);
 }
 
-void tms_pause(const char* tag) {
+// 0 = full success; non-zero = tag only partially paused (XPU: a handle was
+// retained as leaked). Python raises on non-zero; CUDA/ROCm always return 0.
+int tms_pause(const char* tag) {
     std::string tag_str = (tag != nullptr) ? std::string(tag) : "";
-    TorchMemorySaver::instance().pause(tag_str);
+    return static_cast<int>(TorchMemorySaver::instance().pause(tag_str));
 }
 
-void tms_resume(const char* tag) {
+// 0 = full success; non-zero = tag only partially resumed (XPU). Python raises on
+// non-zero; CUDA/ROCm always return 0 (abort internally on error).
+int tms_resume(const char* tag) {
     std::string tag_str = (tag != nullptr) ? std::string(tag) : "";
-    TorchMemorySaver::instance().resume(tag_str);
+    return static_cast<int>(TorchMemorySaver::instance().resume(tag_str));
 }
 
 uint8_t* tms_get_cpu_backup_pointer(const uint8_t* gpu_ptr, uint64_t size) {
@@ -167,24 +166,51 @@ uint8_t* tms_get_cpu_backup_pointer(const uint8_t* gpu_ptr, uint64_t size) {
 }
 
 #if defined(USE_XPU)
-// Pre-warm per-device SYCL contexts before the pluggable allocator is
-// registered (creating a sycl::context inside an allocator callback can
-// deadlock the SYCL runtime). Called from Python init.
+// Pre-warm per-device SYCL contexts from Python init: creating a sycl::context
+// inside an allocator callback can deadlock the SYCL runtime.
 void tms_xpu_prewarm_devices(int n_devices) {
     XPUImplementation::xpu_prewarm_devices(n_devices);
 }
 
-// Authoritative free-device-memory reading via sysman. torch.xpu's allocator
-// accounting does NOT reflect physical pages released by zeVirtualMemUnmap.
+// Authoritative free-device-memory via sysman; torch.xpu allocator accounting
+// does NOT reflect physical pages released by zeVirtualMemUnmap.
 uint64_t tms_xpu_device_free_bytes(int device_id) {
     return XPUImplementation::xpu_device_free_bytes(device_id);
 }
 
-// Committed physical bytes the saver holds on an XPU device. Driver-independent
-// (sysman free-bytes is frozen/deprecated on newer drivers); used by tests to
-// verify real physical commit/release across pause/resume.
+// Physical bytes committed on a device (ACTIVE only). Driver-independent (sysman
+// free-bytes is frozen on newer drivers); tests verify real commit/release across
+// pause/resume.
 uint64_t tms_xpu_committed_bytes(int device_id) {
     return TorchMemorySaver::instance().xpu_committed_bytes(device_id);
+}
+
+// Physical bytes whose L0 handle couldn't be released, retained (leaked). Separate
+// from committed (ACTIVE-only) so a cleanup-failure leak is observable directly,
+// not hidden behind the self-reported ACTIVE state.
+uint64_t tms_xpu_leaked_bytes(int device_id) {
+    return TorchMemorySaver::instance().xpu_leaked_bytes(device_id);
+}
+
+// Bytes still tracked on a device (any state). >0 while the ownership record exists
+// -- incl. the free-VA-failure state where committed and leaked both read 0 -- so
+// tests can assert free retains ownership until L0 confirms release, then it hits 0.
+uint64_t tms_xpu_tracked_bytes(int device_id) {
+    return TorchMemorySaver::instance().xpu_tracked_bytes(device_id);
+}
+
+// Distinct device ids with an allocation matching `tag` (null/empty = all) -- what
+// pause/resume unmap/remap and Python drains (incl. non-current) to avoid DEVICE_LOST.
+// Returns total count; writes up to `capacity` sorted ids (retry bigger if count > it).
+uint32_t tms_xpu_affected_devices(const char* tag, int* out_device_ids, uint32_t capacity) {
+    return TorchMemorySaver::instance().xpu_affected_devices(tag, out_device_ids, capacity);
+}
+
+// Test-only: free a VMM allocation and RETURN the cudaError_t (non-zero = an L0
+// release step failed, entry retained) instead of aborting like tms_torch_free's
+// CUDA_ERROR_CHECK, so a fault-injection test can observe the transactional contract.
+int tms_xpu_free(const void* ptr) {
+    return static_cast<int>(TorchMemorySaver::instance().free(const_cast<void*>(ptr)));
 }
 #endif
 }

@@ -18,22 +18,13 @@ def empty_cache():
 
 
 def _xpu_used_memory(gpu_id=0):
-    """Used device memory on XPU, for pause/resume test assertions.
+    """Used device memory on XPU, for delta-based pause/resume test assertions.
 
-    torch.xpu.memory_allocated reflects the allocator's bookkeeping and does NOT
-    drop when the memory saver releases physical pages via zeVirtualMemUnmap. On
-    newer Intel GPU drivers, device free-byte telemetry (sysman
-    zesMemoryGetState().free and torch.xpu.mem_get_info().free) is
-    frozen/deprecated and never moves.
-
-    Preferred metric: the saver's own committed physical bytes
-    (tms_xpu_committed_bytes), which is driver-independent, drops to 0 on pause()
-    and is restored on resume(). Falls back to the sysman-derived used bytes only
-    when the committed-bytes symbol is unavailable (older builds).
-
-    NOTE: the two paths return DIFFERENT quantities -- saver-committed bytes vs
-    whole-device used bytes. This is fine for the delta-based pause/resume
-    assertions here, but the value is not a reliable absolute device-usage figure.
+    Prefers the saver's own committed physical bytes (tms_xpu_committed_bytes) --
+    driver-independent, drops to 0 on pause() -- since torch/sysman free-byte
+    telemetry is frozen on newer drivers. Falls back to sysman-derived used bytes
+    on older builds; the two return different quantities (saver-committed vs
+    whole-device), fine for deltas but not a reliable absolute usage figure.
     """
     try:
         from torch_memory_saver import torch_memory_saver as _saver

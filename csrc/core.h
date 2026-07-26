@@ -41,9 +41,8 @@ struct AllocationMetadata {
     std::vector<CUmemGenericAllocationHandle> allocHandles;
     std::vector<size_t> chunk_sizes;
 #elif defined(USE_XPU)
-    // Intel XPU (Level Zero): keep the reserved virtual address mapped to a
-    // physical handle that can be unmapped (pause) and re-created (resume).
-    // Fields are defined in hardware_xpu_support.h (XPUAllocExtra).
+    // Intel XPU (Level Zero): reserved VA mapped to a physical handle, unmapped
+    // on pause / re-created on resume. Fields: XPUAllocExtra (hardware_xpu_support.h).
     size_t aligned_size;
     XPUAllocExtra xpu;
 #else
@@ -66,10 +65,25 @@ public:
         bool enable_disk_backup);
     cudaError_t free(void *ptr);
 
-    void pause(const std::string& tag);
-    void resume(const std::string& tag);
+    // XPU: non-zero if the tag only partially paused/resumed (see xpu_pause/
+    // xpu_resume). CUDA/ROCm abort internally and always return cudaSuccess.
+    cudaError_t pause(const std::string& tag);
+    cudaError_t resume(const std::string& tag);
     void set_memory_margin_bytes(uint64_t value) {
+#if defined(USE_XPU)
+        // Rejected on XPU (Python setter also raises): the OOM-margin guard needs a
+        // device-wide free-bytes reading Intel reports frozen, so stay at 0 and warn.
+        if (value != 0) {
+            std::cerr << "[torch_memory_saver.cpp] set_memory_margin_bytes("
+                      << value << ") ignored: NOT supported on Intel XPU "
+                         "(OOM-margin guard needs device free-bytes the driver "
+                         "reports frozen). Manage headroom outside torch_memory_saver."
+                      << std::endl;
+        }
+        (void)value;
+#else
         memory_margin_bytes_.store(value);
+#endif
     }
     uint8_t* get_cpu_backup_pointer(const uint8_t* query_gpu_ptr, uint64_t query_size);
     void set_disk_backup_dir(const std::string& dir) {
@@ -78,8 +92,17 @@ public:
     }
 
 #if defined(USE_XPU)
-    // Committed physical bytes the saver holds on an XPU device (ACTIVE only).
+    // Committed physical bytes held on a device (ACTIVE only).
     uint64_t xpu_committed_bytes(int device_id);
+    // Bytes retained after an L0 release failed (leaked); not in committed, so a
+    // cleanup-failure leak is observable directly.
+    uint64_t xpu_leaked_bytes(int device_id);
+    // Bytes still tracked in any state -- > 0 while the ownership record exists (incl.
+    // after a free() step failure), so tests can prove free retains until release.
+    uint64_t xpu_tracked_bytes(int device_id);
+    // Distinct device ids with an allocation matching `tag` (null/empty = all) --
+    // exactly what pause()/resume() unmap/remap and Python drains around them.
+    uint32_t xpu_affected_devices(const char* tag, int* out_device_ids, uint32_t capacity);
 #endif
 
 private:

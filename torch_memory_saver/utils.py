@@ -91,7 +91,10 @@ def get_binary_path_from_package(stem: str):
         pattern = f"{stem}_cu{major}.*.so"
         runtime_desc = f"CUDA major={major}"
 
-    candidates = [p for d in (dir_package, dir_package.parent) for p in d.glob(pattern)]
+    candidates = list(dir_package.glob(pattern))
+    if not candidates:
+        candidates = list(dir_package.parent.glob(pattern))
+
     if len(candidates) != 1:
         raise RuntimeError(
             f"torch_memory_saver: expected exactly one .so matching {pattern!r} "

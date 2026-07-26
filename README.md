@@ -95,45 +95,26 @@ Please refer to `rl_example.py` for details.
 
 ### Intel XPU
 
-The Intel XPU backend provides the same pause/resume behavior on Intel GPUs,
-built natively on Level Zero virtual memory. It is wired into PyTorch through
-`torch.xpu.memory.XPUPluggableAllocator` + `torch.xpu.MemPool`, so **only
-`hook_mode="torch"` is supported** (the `LD_PRELOAD`-based preload mode is
-CUDA/HIP-specific). Pauseable CUDA-graph capture is not available on XPU.
+Same pause/resume behavior on Intel GPUs via Level Zero VMM, wired into PyTorch
+through `XPUPluggableAllocator` + `torch.xpu.MemPool`. Only `hook_mode="torch"`
+is supported (preload is CUDA/HIP-specific); pauseable CUDA-graph capture is not.
 
-#### Installation
-
-XPU is not shipped as a prebuilt PyPI wheel; install from source. Set
-`TMS_PLATFORM=xpu` to force the XPU backend (otherwise `setup.py` only
-auto-detects it when neither `nvcc` nor `hipcc` is on `PATH`), and use
-`--no-build-isolation` so the build sees your installed `torch+xpu` and can
-match the `libsycl` major to it (under build isolation torch is not importable,
-the ABI match is skipped, and a mismatched oneAPI silently produces a broken
-`.so`):
+Install from source (no prebuilt wheel). `TMS_PLATFORM=xpu` forces the backend;
+`--no-build-isolation` lets the build see `torch+xpu` and ABI-match `libsycl` to
+it (otherwise a mismatched oneAPI silently produces a broken `.so`):
 
 ```bash
-# Prerequisites: a torch+xpu install, Intel oneAPI (icpx) + Level Zero headers.
+# Prerequisites: torch+xpu, Intel oneAPI (icpx) + Level Zero headers.
 source /opt/intel/oneapi/setvars.sh          # put icpx on PATH (or set ICPX=...)
-
-TMS_PLATFORM=xpu pip install --no-build-isolation \
-  "git+https://github.com/fzyzcjy/torch_memory_saver.git"
-# or, from a local checkout:
-TMS_PLATFORM=xpu pip install --no-build-isolation .
+TMS_PLATFORM=xpu pip install --no-build-isolation .   # or `make build-xpu`
 ```
 
-> If the sourced oneAPI's `libsycl` major differs from your torch runtime's,
-> pin a matching compiler with
-> `ICPX=/opt/intel/oneapi/compiler/<ver>/bin/icpx`.
+If the sourced oneAPI's `libsycl` major differs from your torch runtime's, pin a
+matching compiler with `ICPX=/opt/intel/oneapi/compiler/<ver>/bin/icpx`. Then use
+`region`/`pause`/`resume` as on CUDA with `hook_mode="torch"`, `device="xpu"`.
 
-Then use `region` / `pause` / `resume` as on CUDA (see the examples above), with
-`hook_mode = "torch"` and `device="xpu"`. `make build-xpu` runs the same install.
-
-#### Notes
-
-Verifying that memory was actually released: `torch.xpu.memory_allocated()` (and
-even `torch.xpu.mem_get_info()`) do not reflect physical pages released by
-`zeVirtualMemUnmap`. Use sysman (`ZES_ENABLE_SYSMAN=1`) to observe real device
-memory.
+Note: `torch.xpu.memory_allocated()` / `mem_get_info()` do not reflect pages
+released by `zeVirtualMemUnmap`; use sysman (`ZES_ENABLE_SYSMAN=1`) to verify.
 
 ## Development
 

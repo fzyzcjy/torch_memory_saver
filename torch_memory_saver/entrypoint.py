@@ -92,6 +92,17 @@ class TorchMemorySaver:
     @memory_margin_bytes.setter
     def memory_margin_bytes(self, value: int):
         self._ensure_initialized()
+        if self._impl._is_xpu:
+            # Unsupported on XPU: the OOM-margin guard needs a device-wide free-bytes
+            # reading the Intel stack reports frozen (mem_get_info/sysman never move as
+            # memory is consumed). Honoring it would be a lie, so reject not ignore.
+            raise NotImplementedError(
+                "TorchMemorySaver.memory_margin_bytes is not supported on Intel "
+                "XPU: the OOM-margin guard needs a device-wide free-bytes "
+                "reading, which the Intel GPU driver does not provide reliably "
+                "(free-bytes telemetry is frozen). Manage device memory headroom "
+                "outside torch_memory_saver instead."
+            )
         self._impl._binary_wrapper.cdll.set_memory_margin_bytes(value)
 
     def get_cpu_backup(self, x: torch.Tensor, zero_copy: bool = False):
@@ -123,10 +134,12 @@ class _TorchMemorySaverImpl:
         self._hook_util = HookUtilBase.create(hook_mode=hook_mode)
         self._binary_wrapper = BinaryWrapper(path_binary=self._hook_util.get_path_binary())
 
-        # torch.cuda / torch.xpu share the MemPool / use_mem_pool / current_device
-        # / synchronize API; resolve the right module once instead of branching
-        # per platform.
         self._device_module = torch.get_device_module()
+
+        # Devices with pauseable allocations. pause()/resume() unmap+remap across
+        # ALL of them, so on XPU each must be drained first (see pause()). Recorded
+        # everywhere but consulted only on XPU; on CUDA/ROCm the caller syncs.
+        self._region_devices: set[int] = set()
 
         if self._is_xpu:
             # Prewarm per-device SYCL contexts before registering the allocator.
@@ -138,33 +151,32 @@ class _TorchMemorySaverImpl:
         self._mem_pools = defaultdict(
             lambda: self._device_module.MemPool(allocator=self._hook_util.get_allocator())
         )
-        self._use_mem_pool = self._device_module.use_mem_pool
 
         _sanity_checks()
         if torch.version.hip or self._is_xpu:
             # HIP/SYCL runtime static dtors may run before MemPool's at exit
-            # (destruction-order fiasco); free pools via atexit while it's alive.
+            # (destruction-order fiasco); free pools via atexit while runtime alive.
             atexit.register(self._mem_pools.clear)
 
     @contextmanager
     def region(self, tag: str, enable_cpu_backup: bool, enable_disk_backup: bool):
         if self._is_xpu and enable_disk_backup:
-            # Unsupported on XPU: disk spill goes through cudaMallocHost/cudaMemcpy
-            # (csrc/disk_backend.cpp) with no Level Zero path wired up. The C-ABI
-            # malloc also rejects it; raise here for a clean error rather than a
-            # process-fatal abort. Use enable_cpu_backup instead.
+            # Unsupported on XPU: disk spill uses cudaMallocHost/cudaMemcpy with no
+            # Level Zero path. Raise a clean error (the C-ABI malloc also rejects it,
+            # process-fatally) rather than aborting; use enable_cpu_backup instead.
             raise NotImplementedError(
                 "TorchMemorySaver disk backup (enable_disk_backup=True) is not "
                 "supported on Intel XPU; use enable_cpu_backup=True instead."
             )
-        # For hook_mode=preload, we need this b/c https://github.com/fzyzcjy/torch_memory_saver/pull/20#issuecomment-3047099047
-        # (For hook_mode=torch we may not need it, but currently our primary usage is hook_mode=preload, thus we do this for simplicity)
-        #
         # A MemPool is bound to the current device at creation; key by device so
         # multi-device processes (e.g. TP ranks) don't reuse another's pool.
-        key = (tag, enable_cpu_backup, enable_disk_backup, self._current_device())
+        device = self._current_device()
+        # Record device so pause()/resume() can drain it -- backend unmaps all
+        # devices but syncs only recorded ones.
+        self._region_devices.add(device)
+        key = (tag, enable_cpu_backup, enable_disk_backup, device)
         mem_pool = self._mem_pools[key]
-        with self._use_mem_pool(mem_pool):
+        with self._device_module.use_mem_pool(mem_pool):
             with self._with_region_config(tag=tag, enable_cpu_backup=enable_cpu_backup,
                                           enable_disk_backup=enable_disk_backup):
                 yield
@@ -206,46 +218,87 @@ class _TorchMemorySaverImpl:
 
     @contextmanager
     def disable(self, dispose_mem_pool_after_use: bool = True):
+        if self._is_xpu:
+            # Unsupported on XPU: pool-scoped allocs in the disabled body still route
+            # to tms_torch_malloc and exit(1); reject rather than kill the process.
+            raise NotImplementedError(
+                "TorchMemorySaver.disable() is not supported on Intel XPU. "
+                "Allocate outside a region() instead of using disable()."
+            )
+
         assert dispose_mem_pool_after_use, "Only dispose_mem_pool_after_use=true is supported now"
         assert self._binary_wrapper.cdll.tms_get_interesting_region(), "disable() should be called only when tms is active"
 
         self._binary_wrapper.cdll.tms_set_interesting_region(False)
         try:
-            if self._is_xpu:
-                # XPU torch-mode: interesting_region=False already routes every
-                # allocation to the passthrough path, so no separate pool is
-                # needed (and nesting torch.xpu.use_mem_pool can crash on XPU).
+            # We can either reuse the pool or delete it immediately, and we implement the latter currently since Slime uses it.
+            # About why we need a pool: https://github.com/fzyzcjy/torch_memory_saver/pull/20#issuecomment-3047099047
+            pool = torch.cuda.MemPool()
+            with torch.cuda.use_mem_pool(pool):
                 yield
-            else:
-                # We can either reuse the pool or delete it immediately, and we implement the latter currently since Slime uses it.
-                # About why we need a pool: https://github.com/fzyzcjy/torch_memory_saver/pull/20#issuecomment-3047099047
-                pool = torch.cuda.MemPool()
-                with torch.cuda.use_mem_pool(pool):
-                    yield
-                del pool
+            del pool
         finally:
             self._binary_wrapper.cdll.tms_set_interesting_region(True)
 
     def pause(self, tag: Optional[str]):
         if self._is_xpu:
-            # Must not unmap physical pages while kernels are still touching
-            # them: zeVirtualMemUnmap on in-flight pages hangs the device, so
-            # drain the device first. We sync the CURRENT device only; like the
-            # CUDA backend, cross-device synchronization is the caller's job.
-            # Call pause()/resume() with the region's device current -- the
-            # natural one-process-per-rank (one device) deployment already does.
-            self._device_module.synchronize()
+            # Unmapping pages a kernel still touches hangs the device (DEVICE_LOST);
+            # drain every device the backend will unmap for `tag` (_affected_devices).
+            self._sync_affected_devices(tag)
         tag_bytes = tag.encode("utf-8") if tag else None
-        self._binary_wrapper.cdll.tms_pause(tag_bytes)
+        ret = self._binary_wrapper.cdll.tms_pause(tag_bytes)
+        if self._is_xpu and ret != 0:
+            # Non-zero: an allocation was not fully released (left recoverable, see
+            # xpu_pause); raise. Retained bytes are visible via tms_xpu_leaked_bytes.
+            raise RuntimeError(
+                f"torch_memory_saver.pause(tag={tag!r}) partially failed "
+                f"(code {ret}); some allocations could not be released and are "
+                "retained. Retry after resolving the failure."
+            )
 
     def resume(self, tag: Optional[str]):
         tag_bytes = tag.encode("utf-8") if tag else None
-        self._binary_wrapper.cdll.tms_resume(tag_bytes)
+        ret = self._binary_wrapper.cdll.tms_resume(tag_bytes)
         if self._is_xpu:
-            # After remapping, settle the current device's stream so the driver
-            # finishes any paging/TLB work before user kernels touch the remapped
-            # addresses. Current device only (see pause()).
-            self._device_module.synchronize()
+            # Non-zero: some allocation couldn't be re-created/mapped/restored; the
+            # backend rolled it back to PAUSED (data preserved), so raise. Idempotent.
+            if ret != 0:
+                raise RuntimeError(
+                    f"torch_memory_saver.resume(tag={tag!r}) partially failed "
+                    f"(code {ret}); some allocations remain paused. Retry after "
+                    "resolving the failure (e.g. free device memory)."
+                )
+            # Settle each re-mapped device's stream so the driver finishes paging/TLB
+            # work before user kernels touch the remapped addresses.
+            self._sync_affected_devices(tag)
+
+    def _sync_affected_devices(self, tag: Optional[str]):
+        # Drain every device the backend will unmap/remap for `tag` (a missed one
+        # risks a DEVICE_LOST hang); synchronize(device) preserves the current device.
+        for device in self._affected_devices(tag):
+            self._device_module.synchronize(device)
+
+    def _affected_devices(self, tag: Optional[str]) -> list[int]:
+        """Device ids the backend will unmap/remap for `tag` (authoritative).
+
+        Queries tms_xpu_affected_devices (reads the live allocation map under the
+        allocator lock); falls back to the _region_devices mirror only if the
+        symbol is absent (non-XPU or older .so).
+        """
+        cdll = self._binary_wrapper.cdll
+        if not hasattr(cdll, "tms_xpu_affected_devices"):
+            return list(self._region_devices)
+        tag_bytes = tag.encode("utf-8") if tag else None
+        # First call with no buffer learns the count, then size the buffer to it.
+        # Count can only shrink between calls (no allocs during pause/resume), so
+        # one retry suffices; loop guards against any interleaving.
+        capacity = 0
+        while True:
+            buf = (ctypes.c_int * capacity)() if capacity else None
+            count = int(cdll.tms_xpu_affected_devices(tag_bytes, buf, capacity))
+            if count <= capacity:
+                return [int(buf[i]) for i in range(count)] if capacity else []
+            capacity = count
 
     def get_cpu_backup(self, x: torch.Tensor, zero_copy: bool = False):
         assert x.is_cuda or x.is_xpu, f"{x.device=}"

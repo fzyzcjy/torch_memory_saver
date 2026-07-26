@@ -51,10 +51,8 @@ def run(hook_mode: str):
         b = torch.full((_ALLOC_BYTES // 4,), 1.0, dtype=torch.float32, device=f"{device}:{d1}")
     alloc0, alloc1 = used_gib(d0), used_gib(d1)
 
-    # pause()/resume() drain only the current device; a single process driving
-    # two devices syncs each first (one-process-per-rank makes this implicit).
-    mod.synchronize(d0)
-    mod.synchronize(d1)
+    # No manual per-device sync here: pause()/resume() drain every device the
+    # saver has allocated on, so multi-device callers are protected internally.
     torch_memory_saver.pause("t")
     pause0, pause1 = used_gib(d0), used_gib(d1)
 

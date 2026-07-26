@@ -19,11 +19,9 @@
 #define RAMFS_MAGIC 0x858458f6
 #endif
 
-// The GPU<->file transfer streams through a pinned staging buffer via
-// cudaMallocHost/cudaMemcpy, which is CUDA/ROCm-only. On Intel XPU disk backup is
-// rejected up front (malloc SIMPLE_CHECK + Python region()), so this machinery is
-// compiled out. The env-config helpers and the DiskBackend ctor below stay on all
-// platforms so TorchMemorySaver's ctor (holds a DiskBackend member) still links.
+// GPU<->file transfer uses cudaMallocHost/cudaMemcpy (CUDA/ROCm-only), compiled
+// out on XPU (which rejects disk backup up front). The env helpers and DiskBackend
+// ctor below stay on all platforms so the TorchMemorySaver ctor still links.
 #if !defined(USE_XPU)
 
 namespace {

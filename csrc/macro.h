@@ -68,24 +68,12 @@
 #elif defined(USE_XPU)
 // Intel XPU (Level Zero) backend compatibility layer.
 //
-// This backend does NOT use CUDA/HIP. Instead, it implements pause/resume via
-// Level Zero VMM (zeVirtualMemMap/Unmap, zePhysicalMemCreate/Destroy) in
-// hardware_xpu_support.cpp. However, to share the orchestration code in core.cpp
-// (which is platform-agnostic), we map the CUDA-style type names onto plain C
-// types. This avoids duplicating the entire allocator logic for each platform.
-//
-// Why use cudaError_t instead of ze_result_t?
-//   - The shared code (core.h, core.cpp) defines a platform-agnostic interface
-//     using cudaError_t return values and CUdevice for device IDs.
-//   - On CUDA: these map to actual CUDA runtime types.
-//   - On ROCm: #define cudaError_t hipError_t (HIP's equivalent).
-//   - On XPU: we typedef them to plain int (just error codes: 0=success, etc.)
-//   - This allows one implementation of TorchMemorySaver to work across all
-//     platforms, while the actual GPU work uses native APIs in each backend.
-//
-// The XPU implementation in hardware_xpu_support.cpp uses real Level Zero APIs
-// (ze_result_t, etc.) and translates them to these compatibility codes at the
-// boundary. Users never see these types—they call the Python API.
+// This backend implements pause/resume via Level Zero VMM (not CUDA/HIP) in
+// hardware_xpu_support.cpp. To reuse the platform-agnostic orchestration in
+// core.cpp -- which returns cudaError_t and takes CUdevice (real CUDA types on
+// CUDA, hipError_t via #define on ROCm) -- we typedef those to plain int here.
+// hardware_xpu_support.cpp uses real Level Zero APIs and translates ze_result_t
+// to these codes at the boundary; users only ever see the Python API.
 #include <cstddef>
 
 typedef int CUresult;
@@ -98,12 +86,8 @@ typedef void *cudaStream_t;  // Unused on XPU (pluggable allocator is global)
 #define cudaErrorMemoryAllocation 2
 #define cudaErrorInvalidDevicePointer 17
 
-// The shared CUDA_ERROR_CHECK macro (utils.h) formats errors via
-// cudaGetErrorString. The ROCm branch above provides this by mapping it to
-// hipGetErrorString; XPU has no CUDA/HIP runtime, so we provide the equivalent
-// here. The XPU backend (hardware_xpu_support.cpp) reports detailed Level Zero
-// result codes itself; these labels only stringify the small set of
-// cudaError_t values the shared code returns.
+// cudaGetErrorString for the shared CUDA_ERROR_CHECK macro (utils.h); XPU has no
+// CUDA/HIP runtime, so stringify just the cudaError_t codes the shared code returns.
 inline const char *cudaGetErrorString(cudaError_t err) {
     switch (err) {
         case cudaSuccess: return "cudaSuccess";
