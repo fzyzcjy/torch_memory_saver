@@ -158,9 +158,10 @@ void TorchMemorySaver::pause(const std::string& tag) {
 #endif
 }
 
-void TorchMemorySaver::resume(const std::string& tag) {
+cudaError_t TorchMemorySaver::resume(const std::string& tag) {
 #if TMS_ROCM_LEGACY_CHUNKED
     ROCmHIPImplementation::rocm_resume(tag, allocation_metadata_, allocator_metadata_mutex_);
+    return cudaSuccess;
 
 #else
     const std::lock_guard <std::mutex> lock(allocator_metadata_mutex_);
@@ -174,15 +175,20 @@ void TorchMemorySaver::resume(const std::string& tag) {
         }
 
         if (metadata.state != AllocationState::PAUSED) {
-            std::cerr << "[torch_memory_saver.cpp] Cannot resume allocation that is not paused. "
-                      << " tag=" << metadata.tag << " ptr=" << std::to_string((uintptr_t)ptr)
-                      << " file=" << __FILE__ << " func=" << __func__ << " line=" << __LINE__
-                      << std::endl;
-            exit(1);
+            // Already active. Skipping rather than aborting keeps resume()
+            // idempotent, which is what lets a caller retry after resume()
+            // returned an out-of-memory error partway through the map.
+            continue;
         }
 
         CUmemGenericAllocationHandle newAllocHandle;
-        CUDA_ERROR_CHECK(CUDAUtils::cu_mem_create(&newAllocHandle, metadata.size, metadata.device));
+        // cu_mem_create returns cudaErrorMemoryAllocation instead of aborting,
+        // precisely because the caller may be able to free memory and retry.
+        // Propagate it rather than turning it back into exit().
+        cudaError_t create_result = CUDAUtils::cu_mem_create(&newAllocHandle, metadata.size, metadata.device);
+        if (create_result != cudaSuccess) {
+            return create_result;
+        }
 
         CURESULT_CHECK(cuMemMap((CUdeviceptr) ptr, metadata.size, 0, newAllocHandle, 0));
 
@@ -213,6 +219,8 @@ void TorchMemorySaver::resume(const std::string& tag) {
         metadata.state = AllocationState::ACTIVE;
         metadata.allocHandle = newAllocHandle;
     }
+
+    return cudaSuccess;
 #endif
 }
 
