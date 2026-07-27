@@ -146,9 +146,9 @@ void tms_pause(const char* tag) {
     TorchMemorySaver::instance().pause(tag_str);
 }
 
-void tms_resume(const char* tag) {
+cudaError_t tms_resume(const char* tag) {
     std::string tag_str = (tag != nullptr) ? std::string(tag) : "";
-    TorchMemorySaver::instance().resume(tag_str);
+    return TorchMemorySaver::instance().resume(tag_str);
 }
 
 uint8_t* tms_get_cpu_backup_pointer(const uint8_t* gpu_ptr, uint64_t size) {

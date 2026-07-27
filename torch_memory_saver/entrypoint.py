@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 
 _TAG_DEFAULT = "default"
 
+# cudaErrorMemoryAllocation
+_CUDA_ERROR_MEMORY_ALLOCATION = 2
+
 
 class TorchMemorySaver:
     def __init__(self):
@@ -190,7 +193,15 @@ class _TorchMemorySaverImpl:
 
     def resume(self, tag: Optional[str]):
         tag_bytes = tag.encode("utf-8") if tag else None
-        self._binary_wrapper.cdll.tms_resume(tag_bytes)
+        result = self._binary_wrapper.cdll.tms_resume(tag_bytes)
+        if result == _CUDA_ERROR_MEMORY_ALLOCATION:
+            raise torch.cuda.OutOfMemoryError(
+                f"torch_memory_saver: not enough free GPU memory to resume tag={tag!r}. "
+                f"Free memory (e.g. torch.cuda.empty_cache()) and call resume() again; "
+                f"resume() skips the allocations it already restored."
+            )
+        if result != 0:
+            raise RuntimeError(f"torch_memory_saver: tms_resume(tag={tag!r}) failed with cudaError_t={result}")
 
     def get_cpu_backup(self, x: torch.Tensor, zero_copy: bool = False):
         assert x.is_cuda, f"{x.device=}"

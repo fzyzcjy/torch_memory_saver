@@ -50,7 +50,7 @@ public:
     cudaError_t free(void *ptr);
 
     void pause(const std::string& tag);
-    void resume(const std::string& tag);
+    cudaError_t resume(const std::string& tag);
     void set_memory_margin_bytes(uint64_t value) {
         memory_margin_bytes_.store(value);
     }
