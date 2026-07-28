@@ -3,10 +3,22 @@ from contextlib import nullcontext
 
 import multiprocessing
 import traceback
+import torch
 import torch_memory_saver
 from torch_memory_saver.utils import change_env
 
-from examples import simple, cuda_graph, cpu_backup, disk_backup, rl_example, multi_device, multi_device_torch_mode, training_engine, nested_region
+from examples import (
+    simple,
+    cuda_graph,
+    cuda_vmm_granularity,
+    cpu_backup,
+    disk_backup,
+    rl_example,
+    multi_device,
+    multi_device_torch_mode,
+    training_engine,
+    nested_region,
+)
 
 _HOOK_MODES = ["preload", "torch"]
 
@@ -53,6 +65,15 @@ def test_training_engine():
         change_env("TMS_INIT_ENABLE_CPU_BACKUP", "1")
     ):
         _test_core(training_engine.run, hook_mode="preload")
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or torch.version.cuda is None,
+    reason="CUDA VMM test requires a CUDA GPU",
+)
+def test_cuda_vmm_granularity():
+    with change_env("TMS_INIT_ENABLE", "1"):
+        _test_core(cuda_vmm_granularity.run, hook_mode="preload")
 
 
 def test_nested_region():

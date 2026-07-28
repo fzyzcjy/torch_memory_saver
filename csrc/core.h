@@ -22,7 +22,7 @@ enum class AllocationState {
 };
 
 struct AllocationMetadata {
-    size_t size;
+    size_t raw_size;
     CUdevice device;
     std::string tag;
     AllocationState state;
@@ -38,6 +38,7 @@ struct AllocationMetadata {
     std::vector<size_t> chunk_sizes;
 #else
     // CUDA and ROCm 7.0+: Single allocation handle
+    size_t allocation_size;
     CUmemGenericAllocationHandle allocHandle;
 #endif
 };
@@ -46,7 +47,13 @@ class TorchMemorySaver {
 public:
     static TorchMemorySaver& instance();
 
-    cudaError_t malloc(void** ptr, CUdevice device, size_t size, const std::string& tag, bool enable_cpu_backup, bool enable_disk_backup);
+    cudaError_t malloc(
+        void** ptr,
+        CUdevice device,
+        size_t raw_size,
+        const std::string& tag,
+        bool enable_cpu_backup,
+        bool enable_disk_backup);
     cudaError_t free(void *ptr);
 
     void pause(const std::string& tag);

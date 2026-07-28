@@ -26,7 +26,7 @@ namespace ROCmHIPImplementation {
     cudaError_t rocm_malloc(
         void **ptr, 
         CUdevice device, 
-        size_t size, 
+        size_t raw_size,
         const std::string& tag, 
         bool enable_cpu_backup,
         std::unordered_map<void*, AllocationMetadata>& allocation_metadata,

@@ -1,5 +1,6 @@
 #pragma once
 #include <iostream>
+#include <limits>
 #include <vector>
 #include "macro.h"
 
@@ -77,14 +78,14 @@ namespace CUDAUtils {
             return ans;
         }
 
-        static cudaError_t cu_mem_create(CUmemGenericAllocationHandle *alloc_handle, size_t size, CUdevice device) {
+        static cudaError_t cu_mem_create(CUmemGenericAllocationHandle *alloc_handle, size_t allocation_size, CUdevice device) {
             hipMemAllocationProp prop = {};
             prop.type = hipMemAllocationTypePinned;
             prop.location.type = hipMemLocationTypeDevice;
             prop.location.id = device;
             prop.allocFlags.compressionType = 0x0;
 
-            hipError_t ret = hipMemCreate(alloc_handle, size, &prop, 0);
+            hipError_t ret = hipMemCreate(alloc_handle, allocation_size, &prop, 0);
             if (ret == hipErrorOutOfMemory) {
                 std::cerr << "[torch_memory_saver.cpp] hipMemCreate hipErrorOutOfMemory (may not be an issue e.g. torch allocator will free cache and retry)" << std::endl;
                 return hipErrorOutOfMemory;
@@ -94,17 +95,22 @@ namespace CUDAUtils {
             return hipSuccess;
         }
 
-        static void cu_mem_set_access(void *ptr, size_t size, CUdevice device) {
+        static size_t cu_mem_get_allocation_size(size_t raw_size, CUdevice device) {
+            (void)device;
+            return raw_size;
+        }
+
+        static void cu_mem_set_access(void *ptr, size_t allocation_size, CUdevice device) {
             hipMemAccessDesc accessDesc = {};
             accessDesc.location.type = hipMemLocationTypeDevice;
             accessDesc.location.id = device;
             accessDesc.flags = hipMemAccessFlagsProtReadWrite;
-            CURESULT_CHECK(hipMemSetAccess(ptr, size, &accessDesc, 1));
+            CURESULT_CHECK(hipMemSetAccess(ptr, allocation_size, &accessDesc, 1));
         }
     #endif
 
 #elif defined(USE_CUDA)
-    static cudaError_t cu_mem_create(CUmemGenericAllocationHandle *alloc_handle, size_t size, CUdevice device) {
+    static CUmemAllocationProp cu_mem_get_allocation_prop(CUdevice device) {
         CUmemAllocationProp prop = {};
         prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
         prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
@@ -116,7 +122,25 @@ namespace CUDAUtils {
             prop.allocFlags.gpuDirectRDMACapable = 1;
         }
 
-        CUresult ret = cuMemCreate(alloc_handle, size, &prop, 0);
+        return prop;
+    }
+
+    static size_t cu_mem_get_allocation_size(size_t raw_size, CUdevice device) {
+        const CUmemAllocationProp prop = cu_mem_get_allocation_prop(device);
+        size_t granularity = 0;
+        CURESULT_CHECK(cuMemGetAllocationGranularity(
+            &granularity, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM));
+        SIMPLE_CHECK(granularity > 0, "cuMemGetAllocationGranularity returned zero");
+        SIMPLE_CHECK(
+            raw_size <= std::numeric_limits<size_t>::max() - (granularity - 1),
+            "allocation size overflow while applying CUDA VMM granularity");
+        return ((raw_size + granularity - 1) / granularity) * granularity;
+    }
+
+    static cudaError_t cu_mem_create(CUmemGenericAllocationHandle *alloc_handle, size_t allocation_size, CUdevice device) {
+        const CUmemAllocationProp prop = cu_mem_get_allocation_prop(device);
+
+        CUresult ret = cuMemCreate(alloc_handle, allocation_size, &prop, 0);
         if (ret == CUDA_ERROR_OUT_OF_MEMORY) {
             std::cerr << "[torch_memory_saver.cpp] cuMemCreate CUDA_ERROR_OUT_OF_MEMORY (may not be an issue e.g. torch allocator will free cache and retry)" << std::endl;
             return cudaErrorMemoryAllocation;
@@ -126,12 +150,12 @@ namespace CUDAUtils {
         return cudaSuccess;
     }
 
-    static void cu_mem_set_access(void *ptr, size_t size, CUdevice device) {
+    static void cu_mem_set_access(void *ptr, size_t allocation_size, CUdevice device) {
         CUmemAccessDesc access_desc = {};
         access_desc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
         access_desc.location.id = device;
         access_desc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-        CURESULT_CHECK(cuMemSetAccess((CUdeviceptr) ptr, size, &access_desc, 1));
+        CURESULT_CHECK(cuMemSetAccess((CUdeviceptr) ptr, allocation_size, &access_desc, 1));
     }
 
     static CUdevice cu_ctx_get_device() {
