@@ -12,6 +12,7 @@ from examples import (
     cuda_graph,
     cuda_vmm_granularity,
     cpu_backup,
+    disk_backup,
     rl_example,
     multi_device,
     multi_device_torch_mode,
@@ -35,6 +36,11 @@ def test_cuda_graph(hook_mode):
 @pytest.mark.parametrize("hook_mode", _HOOK_MODES)
 def test_cpu_backup(hook_mode):
     _test_core(cpu_backup.run, hook_mode=hook_mode)
+
+
+@pytest.mark.parametrize("hook_mode", _HOOK_MODES)
+def test_disk_backup(hook_mode):
+    _test_core(disk_backup.run, hook_mode=hook_mode)
 
 
 @pytest.mark.parametrize("hook_mode", _HOOK_MODES)

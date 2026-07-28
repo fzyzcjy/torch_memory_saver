@@ -32,9 +32,21 @@ public:
         enable_cpu_backup_ = value;
     }
 
+    bool enable_disk_backup() {
+        if (!enable_disk_backup_.has_value()) {
+            enable_disk_backup_ = get_bool_env_var("TMS_INIT_ENABLE_DISK_BACKUP");
+        }
+        return enable_disk_backup_.value();
+    }
+
+    void set_enable_disk_backup(bool value) {
+        enable_disk_backup_ = value;
+    }
+
 private:
     std::optional<bool> is_interesting_region_;
     std::optional<bool> enable_cpu_backup_;
+    std::optional<bool> enable_disk_backup_;
 };
 static thread_local ThreadLocalConfig thread_local_config;
 
@@ -44,7 +56,8 @@ static thread_local ThreadLocalConfig thread_local_config;
 cudaError_t cudaMalloc(void **ptr, size_t size) {
     if (thread_local_config.is_interesting_region()) {
         return TorchMemorySaver::instance().malloc(
-            ptr, CUDAUtils::cu_ctx_get_device(), size, thread_local_config.current_tag_, thread_local_config.enable_cpu_backup());
+            ptr, CUDAUtils::cu_ctx_get_device(), size, thread_local_config.current_tag_,
+            thread_local_config.enable_cpu_backup(), thread_local_config.enable_disk_backup());
     } else {
         return APIForwarder::call_real_cuda_malloc(ptr, size);
     }
@@ -66,7 +79,8 @@ void *tms_torch_malloc(ssize_t size, int device, cudaStream_t stream) {
     SIMPLE_CHECK(thread_local_config.is_interesting_region(), "only support interesting region");
     void *ptr;
     CUDA_ERROR_CHECK(TorchMemorySaver::instance().malloc(
-        &ptr, CUDAUtils::cu_device_get(device), size, thread_local_config.current_tag_, thread_local_config.enable_cpu_backup()));
+        &ptr, CUDAUtils::cu_device_get(device), size, thread_local_config.current_tag_,
+        thread_local_config.enable_cpu_backup(), thread_local_config.enable_disk_backup()));
     return ptr;
 }
 
@@ -108,6 +122,19 @@ bool tms_get_enable_cpu_backup() {
 
 void tms_set_enable_cpu_backup(bool enable_cpu_backup) {
     thread_local_config.set_enable_cpu_backup(enable_cpu_backup);
+}
+
+bool tms_get_enable_disk_backup() {
+    return thread_local_config.enable_disk_backup();
+}
+
+void tms_set_enable_disk_backup(bool enable_disk_backup) {
+    thread_local_config.set_enable_disk_backup(enable_disk_backup);
+}
+
+void tms_set_disk_backup_dir(const char* dir) {
+    SIMPLE_CHECK(dir != nullptr, "disk backup dir should not be null");
+    TorchMemorySaver::instance().set_disk_backup_dir(std::string(dir));
 }
 
 void set_memory_margin_bytes(uint64_t value) {

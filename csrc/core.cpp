@@ -3,16 +3,35 @@
 #include "macro.h"
 #include "api_forwarder.h"
 
-TorchMemorySaver::TorchMemorySaver() {}
+TorchMemorySaver::TorchMemorySaver()
+    : disk_backend_(compute_disk_backup_dir_from_env(), compute_disk_chunk_bytes_from_env()) {}
 
 TorchMemorySaver &TorchMemorySaver::instance() {
     static TorchMemorySaver instance;
     return instance;
 }
 
-cudaError_t TorchMemorySaver::malloc(void **ptr, CUdevice device, size_t raw_size, const std::string& tag, const bool enable_cpu_backup) {
+cudaError_t TorchMemorySaver::malloc(
+    void **ptr,
+    CUdevice device,
+    size_t raw_size,
+    const std::string& tag,
+    const bool enable_cpu_backup,
+    const bool enable_disk_backup) {
+    // Enforce here, not only in the Python layer: an assert is stripped under
+    // python -O and bypassed by direct C-API / env-var use.
+    SIMPLE_CHECK(!(enable_cpu_backup && enable_disk_backup),
+                 "cpu_backup and disk_backup are mutually exclusive");
 #if TMS_ROCM_LEGACY_CHUNKED
-    return ROCmHIPImplementation::rocm_malloc(ptr, device, raw_size, tag, enable_cpu_backup, allocation_metadata_, allocator_metadata_mutex_);
+    SIMPLE_CHECK(!enable_disk_backup, "disk backup is not supported on the ROCm 6.x legacy chunked path");
+    return ROCmHIPImplementation::rocm_malloc(
+        ptr,
+        device,
+        raw_size,
+        tag,
+        enable_cpu_backup,
+        allocation_metadata_,
+        allocator_metadata_mutex_);
 
 #else
     const size_t allocation_size = CUDAUtils::cu_mem_get_allocation_size(raw_size, device);
@@ -47,7 +66,7 @@ cudaError_t TorchMemorySaver::malloc(void **ptr, CUdevice device, size_t raw_siz
             *ptr,
             AllocationMetadata{
                 raw_size, device, tag, AllocationState::ACTIVE, enable_cpu_backup, nullptr,
-                allocation_size, allocHandle}
+                enable_disk_backup, DiskBackupSlot{}, allocation_size, allocHandle}
         );
     }
 
@@ -88,6 +107,10 @@ cudaError_t TorchMemorySaver::free(void *ptr) {
     if (nullptr != metadata.cpu_backup) {
         CUDA_ERROR_CHECK(cudaFreeHost(metadata.cpu_backup));
         metadata.cpu_backup = nullptr;
+    }
+
+    if (metadata.enable_disk_backup) {
+        disk_backend_.release(metadata.disk);
     }
 
 #ifdef TMS_DEBUG_LOG
@@ -132,6 +155,8 @@ void TorchMemorySaver::pause(const std::string& tag) {
             SIMPLE_CHECK(metadata.cpu_backup != nullptr, "cpu_backup should not be nullptr");
             // TODO may use cudaMemcpyAsync if needed
             CUDA_ERROR_CHECK(cudaMemcpy(metadata.cpu_backup, ptr, metadata.raw_size, cudaMemcpyDeviceToHost));
+        } else if (metadata.enable_disk_backup) {
+            disk_backend_.offload(ptr, metadata.raw_size, metadata.disk);
         }
 
         CURESULT_CHECK(cuMemUnmap((CUdeviceptr) ptr, metadata.allocation_size));
@@ -192,6 +217,8 @@ void TorchMemorySaver::resume(const std::string& tag) {
             // (users may want to lazily free to reduce re-alloc time)
             CUDA_ERROR_CHECK(cudaFreeHost(metadata.cpu_backup));
             metadata.cpu_backup = nullptr;
+        } else if (metadata.enable_disk_backup) {
+            disk_backend_.onload(ptr, metadata.raw_size, metadata.disk);
         }
 
 #ifdef TMS_DEBUG_LOG
@@ -225,6 +252,10 @@ uint8_t* TorchMemorySaver::get_cpu_backup_pointer(const uint8_t* query_gpu_ptr, 
 
         if ((ptr <= query_gpu_ptr) && (query_gpu_ptr + query_size <= ptr + total_size)) {
             const size_t offset = query_gpu_ptr - ptr;
+            // Disk-backed allocations have no CPU-resident copy; callers must use the resumed GPU tensor.
+            if (metadata.enable_disk_backup) {
+                return nullptr;
+            }
             if (metadata.state == AllocationState::ACTIVE) {
                 return nullptr;
             } else {

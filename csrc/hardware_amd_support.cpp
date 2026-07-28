@@ -187,7 +187,18 @@ namespace ROCmHIPImplementation {
             const std::lock_guard<std::mutex> lock(allocator_metadata_mutex);
             allocation_metadata.emplace(
                 *ptr,
-                AllocationMetadata{raw_size, device, tag, AllocationState::ACTIVE, enable_cpu_backup, nullptr, aligned_size, std::move(allocHandles), std::move(chunk_sizes)}
+                AllocationMetadata{
+                    raw_size,
+                    device,
+                    tag,
+                    AllocationState::ACTIVE,
+                    enable_cpu_backup,
+                    nullptr,
+                    false,
+                    DiskBackupSlot{},
+                    aligned_size,
+                    std::move(allocHandles),
+                    std::move(chunk_sizes)}
             );
         }
 
@@ -217,7 +228,7 @@ namespace ROCmHIPImplementation {
         }
 
         // Unmap and release chunks
-        cu_mem_unmap_and_release(metadata.device, metadata.raw_size, (hipDeviceptr_t)ptr, metadata.allocHandles, metadata.chunk_sizes);
+        cu_mem_unmap_and_release(metadata.device, metadata.aligned_size, (hipDeviceptr_t)ptr, metadata.allocHandles, metadata.chunk_sizes);
 
         // Free the reserved address using stored aligned_size
         CURESULT_CHECK(hipMemAddressFree((hipDeviceptr_t)ptr, metadata.aligned_size));

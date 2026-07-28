@@ -82,6 +82,7 @@ def _create_ext_modules(platform):
     sources = [
         'csrc/api_forwarder.cpp',
         'csrc/core.cpp',
+        'csrc/disk_backend.cpp',
         'csrc/entrypoint.cpp',
     ]
     
