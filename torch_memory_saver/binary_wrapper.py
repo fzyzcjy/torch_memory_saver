@@ -33,17 +33,14 @@ def _setup_function_signatures(cdll):
     cdll.tms_get_enable_disk_backup.restype = ctypes.c_bool
     cdll.tms_set_disk_backup_dir.argtypes = [ctypes.c_char_p]
     cdll.tms_pause.argtypes = [ctypes.c_char_p]
-    # 0 = success; non-zero = partial pause (XPU: a physical handle couldn't be
-    # released, so it was retained/leaked).
     cdll.tms_pause.restype = ctypes.c_int
     cdll.tms_resume.argtypes = [ctypes.c_char_p]
-    # 0 = success; non-zero = partial resume (XPU).
     cdll.tms_resume.restype = ctypes.c_int
     cdll.set_memory_margin_bytes.argtypes = [ctypes.c_uint64]
     cdll.tms_get_cpu_backup_pointer.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint64]
     cdll.tms_get_cpu_backup_pointer.restype = ctypes.POINTER(ctypes.c_uint8)
 
-    # XPU-only symbols (present only in XPU builds).
+    # XPU-only symbols.
     if hasattr(cdll, "tms_xpu_prewarm_devices"):
         cdll.tms_xpu_prewarm_devices.argtypes = [ctypes.c_int]
         cdll.tms_xpu_prewarm_devices.restype = None
@@ -60,13 +57,9 @@ def _setup_function_signatures(cdll):
         cdll.tms_xpu_tracked_bytes.argtypes = [ctypes.c_int]
         cdll.tms_xpu_tracked_bytes.restype = ctypes.c_uint64
     if hasattr(cdll, "tms_xpu_free"):
-        # (const void* ptr) -> cudaError_t (0 = success; non-zero = step failed,
-        # entry retained). Test-only: exercises the transactional free path
-        # without the process-fatal CUDA_ERROR_CHECK of the normal free hook.
         cdll.tms_xpu_free.argtypes = [ctypes.c_void_p]
         cdll.tms_xpu_free.restype = ctypes.c_int
     if hasattr(cdll, "tms_xpu_affected_devices"):
-        # (tag, out_device_ids buffer, capacity) -> total distinct count
         cdll.tms_xpu_affected_devices.argtypes = [
             ctypes.c_char_p,
             ctypes.POINTER(ctypes.c_int),

@@ -2,6 +2,7 @@ import ctypes
 import logging
 import os
 from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,7 @@ def _is_rocm_torch() -> bool:
     return bool(getattr(torch.version, "hip", None))
 
 
+@lru_cache(maxsize=1)
 def is_xpu() -> bool:
     try:
         import torch
@@ -82,8 +84,6 @@ def get_binary_path_from_package(stem: str):
         pattern = f"{stem}.*.so"
         runtime_desc = "ROCm/HIP torch"
     elif is_xpu():
-        # XPU builds ship a single unsuffixed binary built against the local
-        # SYCL runtime (the SONAME, e.g. libsycl.so.8, is matched at build time).
         pattern = f"{stem}.*.so"
         runtime_desc = "Intel XPU torch"
     else:

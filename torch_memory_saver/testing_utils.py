@@ -18,18 +18,10 @@ def empty_cache():
 
 
 def _xpu_used_memory(gpu_id=0):
-    """Used device memory on XPU, for delta-based pause/resume test assertions.
-
-    Prefers the saver's own committed physical bytes (tms_xpu_committed_bytes) --
-    driver-independent, drops to 0 on pause() -- since torch/sysman free-byte
-    telemetry is frozen on newer drivers. Falls back to sysman-derived used bytes
-    on older builds; the two return different quantities (saver-committed vs
-    whole-device), fine for deltas but not a reliable absolute usage figure.
-    """
+    """Used device memory on XPU, for delta-based pause/resume test assertions."""
     try:
         from torch_memory_saver import torch_memory_saver as _saver
 
-        # Idempotent; required because committed-bytes reads saver state.
         _saver._ensure_initialized()
         cdll = _saver._impl._binary_wrapper.cdll
         if hasattr(cdll, "tms_xpu_committed_bytes"):

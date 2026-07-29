@@ -11,7 +11,7 @@ def run(hook_mode: str):
     torch_memory_saver.hook_mode = hook_mode
     logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
 
-    device = get_device()  # 'xpu' or 'cuda'
+    device = get_device()
     set_device = torch.xpu.set_device if device == "xpu" else torch.cuda.set_device
 
     checker = _MemoryChecker()

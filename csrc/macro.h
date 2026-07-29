@@ -66,28 +66,18 @@
 #define TMS_ROCM_LEGACY_CHUNKED 0
 
 #elif defined(USE_XPU)
-// Intel XPU (Level Zero) backend compatibility layer.
-//
-// This backend implements pause/resume via Level Zero VMM (not CUDA/HIP) in
-// hardware_xpu_support.cpp. To reuse the platform-agnostic orchestration in
-// core.cpp -- which returns cudaError_t and takes CUdevice (real CUDA types on
-// CUDA, hipError_t via #define on ROCm) -- we typedef those to plain int here.
-// hardware_xpu_support.cpp uses real Level Zero APIs and translates ze_result_t
-// to these codes at the boundary; users only ever see the Python API.
 #include <cstddef>
 
 typedef int CUresult;
-typedef int cudaError_t;     // Just an error code (0=success, 2=OOM, 17=bad ptr)
-typedef int CUdevice;        // Device ordinal (0, 1, 2, ...)
-typedef void *cudaStream_t;  // Unused on XPU (pluggable allocator is global)
+typedef int cudaError_t;
+typedef int CUdevice;        // device ordinal
+typedef void *cudaStream_t;  // unused on XPU
 
 #define CUDA_SUCCESS 0
 #define cudaSuccess 0
 #define cudaErrorMemoryAllocation 2
 #define cudaErrorInvalidDevicePointer 17
 
-// cudaGetErrorString for the shared CUDA_ERROR_CHECK macro (utils.h); XPU has no
-// CUDA/HIP runtime, so stringify just the cudaError_t codes the shared code returns.
 inline const char *cudaGetErrorString(cudaError_t err) {
     switch (err) {
         case cudaSuccess: return "cudaSuccess";
@@ -95,6 +85,21 @@ inline const char *cudaGetErrorString(cudaError_t err) {
         case cudaErrorInvalidDevicePointer: return "invalid device pointer";
         default: return "unknown XPU error";
     }
+}
+
+typedef int cudaMemcpyKind;
+#define cudaMemcpyDeviceToHost 0
+#define cudaMemcpyHostToDevice 1
+
+inline cudaError_t cudaMallocHost(void **ptr, size_t size) {
+    (void)size;
+    *ptr = nullptr;
+    return cudaErrorMemoryAllocation;
+}
+
+inline cudaError_t cudaMemcpy(void *dst, const void *src, size_t size, cudaMemcpyKind kind) {
+    (void)dst; (void)src; (void)size; (void)kind;
+    return cudaErrorMemoryAllocation;
 }
 
 #define TMS_ROCM_LEGACY_CHUNKED 0

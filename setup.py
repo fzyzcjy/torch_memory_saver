@@ -23,8 +23,6 @@ def _find_platform_home(platform):
             else:
                 home = '/usr/local/cuda'
     elif platform == "xpu":
-        # Symmetry with cuda/hip only; unused for XPU. _create_ext_modules derives
-        # XPU include/lib from _icpx_oneapi_include_lib() (the actual build compiler).
         home = os.environ.get('ONEAPI_ROOT')
         if home is None:
             icpx = _find_icpx()
@@ -47,7 +45,6 @@ def _find_platform_home(platform):
 
 def _detect_platform():
     """Detect whether to use CUDA, HIP or XPU based on available tools."""
-    # Allow explicit override.
     forced = os.environ.get("TMS_PLATFORM")
     if forced:
         return forced
@@ -96,8 +93,6 @@ class build_platform_ext(build_ext):
             self.compiler.set_executable("compiler_cxx", icpx)
             self.compiler.set_executable("linker_so", f"{icpx} -shared")
             for ext in self.extensions:
-                # Append (not reassign) so the -O3/-std=c++17 seeded by
-                # _create_ext_modules() survives; icpx honors the last -O flag.
                 ext.extra_compile_args = ext.extra_compile_args + ['-fPIC', '-fsycl', '-fsycl-targets=spir64']
                 ext.extra_link_args = ext.extra_link_args + ['-fsycl', '-fsycl-targets=spir64', '-shared']
         # For CUDA, use default compiler (no special setup needed)
@@ -105,8 +100,6 @@ class build_platform_ext(build_ext):
         build_ext.build_extensions(self)
 
     def finalize_options(self):
-        # Set CC/CXX before super(): new_compiler reads os.environ here;
-        # build_extensions() is too late.
         if self.platform == "xpu":
             icpx = _resolve_xpu_icpx()
             os.environ["CC"] = icpx
@@ -143,14 +136,9 @@ def _create_ext_modules(platform):
         libraries = ['amdhip64', 'dl']
         platform_macros = [('USE_ROCM', '1'), ('__HIP_PLATFORM_AMD__', '1')]
     elif platform == "xpu":
-        # Add Intel XPU (Level Zero) source file.
         sources.append('csrc/hardware_xpu_support.cpp')
-        # Headers/libs from the ABI-matched icpx (not a sourced ONEAPI_ROOT), so
-        # the compiled libsycl SONAME matches the torch runtime.
         icpx = _resolve_xpu_icpx()
         include_dirs, library_dirs = _icpx_oneapi_include_lib(icpx)
-        # Level Zero headers (ze_api.h / zes_api.h) live in the system include path
-        # (e.g. /usr/include/level_zero); link ze_loader.
         libraries = ['sycl', 'ze_loader']
         platform_macros = [('USE_XPU', '1')]
     else:  # cuda
@@ -177,8 +165,7 @@ def _create_ext_modules(platform):
     else:
         name_suffix = ""
 
-    # XPU only supports hook_mode='torch' (in-process pluggable allocator);
-    # preload/LD_PRELOAD interception of cudaMalloc is CUDA/HIP-only.
+    # XPU only supports hook_mode='torch'
     hook_variants = [
         (f'torch_memory_saver_hook_mode_torch{name_suffix}', [('TMS_HOOK_MODE_TORCH', '1')]),
     ]
@@ -231,8 +218,6 @@ def _find_icpx():
     return None
 
 
-# Match the icpx we build with to the libsycl the installed torch loads, and
-# derive its include/lib dirs, so the .so links the same libsycl ABI at runtime.
 def _sycl_major_from_version_hpp(include_root):
     """__LIBSYCL_MAJOR_VERSION from <include_root>/sycl/version.hpp, or None."""
     import re

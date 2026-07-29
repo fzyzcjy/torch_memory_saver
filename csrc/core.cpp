@@ -34,12 +34,8 @@ cudaError_t TorchMemorySaver::malloc(
         allocator_metadata_mutex_);
 
 #elif defined(USE_XPU)
-    // Disk backup uses cudaMallocHost/cudaMemcpy (disk_backend.cpp), no Level Zero
-    // path; reject here too (the Python setter also raises). cpu_backup still works.
     SIMPLE_CHECK(!enable_disk_backup, "disk backup is not supported on Intel XPU");
-    // memory_margin_bytes_ unused: the OOM guard needs a device-wide free-bytes
-    // reading Intel drivers report frozen, so it stays 0 (both entry points reject it).
-    return XPUImplementation::xpu_malloc(ptr, device, size, tag, enable_cpu_backup, allocation_metadata_, allocator_metadata_mutex_);
+    return XPUImplementation::xpu_malloc(ptr, device, raw_size, tag, enable_cpu_backup, allocation_metadata_, allocator_metadata_mutex_);
 
 #else
     const size_t allocation_size = CUDAUtils::cu_mem_get_allocation_size(raw_size, device);

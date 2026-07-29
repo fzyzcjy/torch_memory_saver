@@ -93,9 +93,6 @@ class TorchMemorySaver:
     def memory_margin_bytes(self, value: int):
         self._ensure_initialized()
         if self._impl._is_xpu:
-            # Unsupported on XPU: the OOM-margin guard needs a device-wide free-bytes
-            # reading the Intel stack reports frozen (mem_get_info/sysman never move as
-            # memory is consumed). Honoring it would be a lie, so reject not ignore.
             raise NotImplementedError(
                 "TorchMemorySaver.memory_margin_bytes is not supported on Intel "
                 "XPU: the OOM-margin guard needs a device-wide free-bytes "
@@ -136,11 +133,6 @@ class _TorchMemorySaverImpl:
 
         self._device_module = torch.get_device_module()
 
-        # Devices with pauseable allocations. pause()/resume() unmap+remap across
-        # ALL of them, so on XPU each must be drained first (see pause()). Recorded
-        # everywhere but consulted only on XPU; on CUDA/ROCm the caller syncs.
-        self._region_devices: set[int] = set()
-
         if self._is_xpu:
             # Prewarm per-device SYCL contexts before registering the allocator.
             if hasattr(self._binary_wrapper.cdll, "tms_xpu_prewarm_devices"):
@@ -161,19 +153,11 @@ class _TorchMemorySaverImpl:
     @contextmanager
     def region(self, tag: str, enable_cpu_backup: bool, enable_disk_backup: bool):
         if self._is_xpu and enable_disk_backup:
-            # Unsupported on XPU: disk spill uses cudaMallocHost/cudaMemcpy with no
-            # Level Zero path. Raise a clean error (the C-ABI malloc also rejects it,
-            # process-fatally) rather than aborting; use enable_cpu_backup instead.
             raise NotImplementedError(
                 "TorchMemorySaver disk backup (enable_disk_backup=True) is not "
                 "supported on Intel XPU; use enable_cpu_backup=True instead."
             )
-        # A MemPool is bound to the current device at creation; key by device so
-        # multi-device processes (e.g. TP ranks) don't reuse another's pool.
         device = self._current_device()
-        # Record device so pause()/resume() can drain it -- backend unmaps all
-        # devices but syncs only recorded ones.
-        self._region_devices.add(device)
         key = (tag, enable_cpu_backup, enable_disk_backup, device)
         mem_pool = self._mem_pools[key]
         with self._device_module.use_mem_pool(mem_pool):
@@ -219,8 +203,6 @@ class _TorchMemorySaverImpl:
     @contextmanager
     def disable(self, dispose_mem_pool_after_use: bool = True):
         if self._is_xpu:
-            # Unsupported on XPU: pool-scoped allocs in the disabled body still route
-            # to tms_torch_malloc and exit(1); reject rather than kill the process.
             raise NotImplementedError(
                 "TorchMemorySaver.disable() is not supported on Intel XPU. "
                 "Allocate outside a region() instead of using disable()."
@@ -242,14 +224,10 @@ class _TorchMemorySaverImpl:
 
     def pause(self, tag: Optional[str]):
         if self._is_xpu:
-            # Unmapping pages a kernel still touches hangs the device (DEVICE_LOST);
-            # drain every device the backend will unmap for `tag` (_affected_devices).
-            self._sync_affected_devices(tag)
+            self._xpu_sync_affected_devices(tag)
         tag_bytes = tag.encode("utf-8") if tag else None
         ret = self._binary_wrapper.cdll.tms_pause(tag_bytes)
         if self._is_xpu and ret != 0:
-            # Non-zero: an allocation was not fully released (left recoverable, see
-            # xpu_pause); raise. Retained bytes are visible via tms_xpu_leaked_bytes.
             raise RuntimeError(
                 f"torch_memory_saver.pause(tag={tag!r}) partially failed "
                 f"(code {ret}); some allocations could not be released and are "
@@ -260,38 +238,27 @@ class _TorchMemorySaverImpl:
         tag_bytes = tag.encode("utf-8") if tag else None
         ret = self._binary_wrapper.cdll.tms_resume(tag_bytes)
         if self._is_xpu:
-            # Non-zero: some allocation couldn't be re-created/mapped/restored; the
-            # backend rolled it back to PAUSED (data preserved), so raise. Idempotent.
             if ret != 0:
                 raise RuntimeError(
                     f"torch_memory_saver.resume(tag={tag!r}) partially failed "
                     f"(code {ret}); some allocations remain paused. Retry after "
                     "resolving the failure (e.g. free device memory)."
                 )
-            # Settle each re-mapped device's stream so the driver finishes paging/TLB
-            # work before user kernels touch the remapped addresses.
-            self._sync_affected_devices(tag)
+            self._xpu_sync_affected_devices(tag)
 
-    def _sync_affected_devices(self, tag: Optional[str]):
-        # Drain every device the backend will unmap/remap for `tag` (a missed one
-        # risks a DEVICE_LOST hang); synchronize(device) preserves the current device.
-        for device in self._affected_devices(tag):
+    def _xpu_sync_affected_devices(self, tag: Optional[str]):
+        for device in self._xpu_affected_devices(tag):
             self._device_module.synchronize(device)
 
-    def _affected_devices(self, tag: Optional[str]) -> list[int]:
-        """Device ids the backend will unmap/remap for `tag` (authoritative).
+    def _xpu_affected_devices(self, tag: Optional[str]) -> list[int]:
+        """Device ids the XPU backend will unmap/remap for `tag` (authoritative).
 
-        Queries tms_xpu_affected_devices (reads the live allocation map under the
-        allocator lock); falls back to the _region_devices mirror only if the
-        symbol is absent (non-XPU or older .so).
+        XPU only (callers guard on _is_xpu). Queries tms_xpu_affected_devices,
+        which reads the live allocation map under the allocator lock -- exactly
+        what xpu_pause/xpu_resume iterate.
         """
         cdll = self._binary_wrapper.cdll
-        if not hasattr(cdll, "tms_xpu_affected_devices"):
-            return list(self._region_devices)
         tag_bytes = tag.encode("utf-8") if tag else None
-        # First call with no buffer learns the count, then size the buffer to it.
-        # Count can only shrink between calls (no allocs during pause/resume), so
-        # one retry suffices; loop guards against any interleaving.
         capacity = 0
         while True:
             buf = (ctypes.c_int * capacity)() if capacity else None

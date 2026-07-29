@@ -19,11 +19,6 @@
 #define RAMFS_MAGIC 0x858458f6
 #endif
 
-// GPU<->file transfer uses cudaMallocHost/cudaMemcpy (CUDA/ROCm-only), compiled
-// out on XPU (which rejects disk backup up front). The env helpers and DiskBackend
-// ctor below stay on all platforms so the TorchMemorySaver ctor still links.
-#if !defined(USE_XPU)
-
 namespace {
 
 void pwrite_all(int fd, const void* buf, size_t n, off_t offset) {
@@ -75,8 +70,6 @@ void drop_page_cache(int fd, size_t size) {
 
 }  // namespace
 
-#endif  // !USE_XPU (CUDA/ROCm transfer helpers)
-
 std::string compute_disk_backup_dir_from_env() {
     const char* dir = std::getenv("TMS_DISK_BACKUP_DIR");
     return (dir != nullptr) ? std::string(dir) : std::string("/tmp");
@@ -91,8 +84,6 @@ size_t compute_disk_chunk_bytes_from_env() {
 
 DiskBackend::DiskBackend(std::string dir, size_t chunk_bytes)
     : dir_(std::move(dir)), chunk_bytes_(chunk_bytes) {}
-
-#if !defined(USE_XPU)  // offload/onload/release use CUDA memcpy; unused on XPU
 
 void DiskBackend::ensure_staging_buf_() {
     if (staging_buf_ == nullptr) {
@@ -168,5 +159,3 @@ void DiskBackend::release(DiskBackupSlot& slot) {
         slot.path.clear();
     }
 }
-
-#endif  // !USE_XPU (DiskBackend transfer methods)
