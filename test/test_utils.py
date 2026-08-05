@@ -1,7 +1,9 @@
+import os
 import sys
 from types import SimpleNamespace
 
 from torch_memory_saver import utils
+from torch_memory_saver.utils import change_env
 
 
 def _fake_torch(cuda=None, hip=None):
@@ -32,3 +34,23 @@ def test_get_binary_path_from_package_keeps_cuda_suffix_selection(monkeypatch, t
     monkeypatch.setitem(sys.modules, "torch", _fake_torch(cuda="12.9"))
 
     assert utils.get_binary_path_from_package(stem) == binary
+
+
+def test_change_env_leaves_absent_key_absent(monkeypatch):
+    key = "TMS_TEST_CHANGE_ENV_ABSENT"
+    monkeypatch.delenv(key, raising=False)
+
+    with change_env(key, "1"):
+        assert os.environ[key] == "1"
+
+    assert key not in os.environ
+
+
+def test_change_env_restores_previous_value(monkeypatch):
+    key = "TMS_TEST_CHANGE_ENV_PRESENT"
+    monkeypatch.setenv(key, "old")
+
+    with change_env(key, "1"):
+        assert os.environ[key] == "1"
+
+    assert os.environ[key] == "old"
