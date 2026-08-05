@@ -97,8 +97,6 @@ def change_env(key: str, value: str):
         yield
     finally:
         assert os.environ[key] == value
-        # Restoring an absent key as "" would break consumers that reject empty
-        # values (e.g. C++ get_bool_env_var aborts on them).
         if old_value is None:
             os.environ.pop(key, None)
         else:
