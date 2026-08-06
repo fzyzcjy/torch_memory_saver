@@ -90,12 +90,15 @@ def get_binary_path_from_package(stem: str):
 # private utils, not to be used by end users
 @contextmanager
 def change_env(key: str, value: str):
-    old_value = os.environ.get(key, "")
+    old_value = os.environ.get(key)
     os.environ[key] = value
     logger.debug(f"change_env set key={key} value={value}")
     try:
         yield
     finally:
         assert os.environ[key] == value
-        os.environ[key] = old_value
+        if old_value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = old_value
         logger.debug(f"change_env restore key={key} value={old_value}")
