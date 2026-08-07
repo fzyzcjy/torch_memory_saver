@@ -68,8 +68,8 @@ def test_training_engine():
 
 
 @pytest.mark.skipif(
-    not torch.cuda.is_available() or torch.version.cuda is None,
-    reason="CUDA VMM test requires a CUDA GPU",
+    not torch.cuda.is_available(),
+    reason="VMM free-while-paused / granularity test needs a GPU",
 )
 def test_cuda_vmm_granularity():
     with change_env("TMS_INIT_ENABLE", "1"):

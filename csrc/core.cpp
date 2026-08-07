@@ -100,8 +100,10 @@ cudaError_t TorchMemorySaver::free(void *ptr) {
 
     CUDA_ERROR_CHECK(cudaDeviceSynchronize());
 
-    CURESULT_CHECK(cuMemUnmap((CUdeviceptr) ptr, metadata.allocation_size));
-    CURESULT_CHECK(cuMemRelease(metadata.allocHandle));
+    if (AllocationState::ACTIVE == metadata.state) {
+        CURESULT_CHECK(cuMemUnmap((CUdeviceptr) ptr, metadata.allocation_size));
+        CURESULT_CHECK(cuMemRelease(metadata.allocHandle));
+    }
     CURESULT_CHECK(cuMemAddressFree((CUdeviceptr) ptr, metadata.allocation_size));
 
     if (nullptr != metadata.cpu_backup) {
