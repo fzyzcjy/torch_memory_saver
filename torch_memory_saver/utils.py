@@ -2,6 +2,7 @@ import ctypes
 import logging
 import os
 from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,16 @@ def _is_rocm_torch() -> bool:
         return False
 
     return bool(getattr(torch.version, "hip", None))
+
+
+@lru_cache(maxsize=1)
+def is_xpu() -> bool:
+    try:
+        import torch
+    except ImportError:
+        return False
+
+    return hasattr(torch, "xpu") and torch.xpu.is_available()
 
 
 def _detect_cuda_major() -> int:
@@ -72,12 +83,18 @@ def get_binary_path_from_package(stem: str):
     if _is_rocm_torch():
         pattern = f"{stem}.*.so"
         runtime_desc = "ROCm/HIP torch"
+    elif is_xpu():
+        pattern = f"{stem}.*.so"
+        runtime_desc = "Intel XPU torch"
     else:
         major = _detect_cuda_major()
         pattern = f"{stem}_cu{major}.*.so"
         runtime_desc = f"CUDA major={major}"
 
-    candidates = [p for d in (dir_package, dir_package.parent) for p in d.glob(pattern)]
+    candidates = list(dir_package.glob(pattern))
+    if not candidates:
+        candidates = list(dir_package.parent.glob(pattern))
+
     if len(candidates) != 1:
         raise RuntimeError(
             f"torch_memory_saver: expected exactly one .so matching {pattern!r} "

@@ -1,6 +1,7 @@
 import logging
 import os
 import shutil
+import subprocess
 from pathlib import Path
 import setuptools
 from setuptools import setup
@@ -11,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # copy & modify from torch/utils/cpp_extension.py
 def _find_platform_home(platform):
-    """Find the install path for the specified platform (cuda/rocm)."""
+    """Find the install path for the specified platform (cuda/rocm/xpu)."""
     if platform == "cuda":
         # Find CUDA home
         home = os.environ.get('CUDA_HOME') or os.environ.get('CUDA_PATH')
@@ -21,6 +22,15 @@ def _find_platform_home(platform):
                 home = os.path.dirname(os.path.dirname(compiler_path))
             else:
                 home = '/usr/local/cuda'
+    elif platform == "xpu":
+        home = os.environ.get('ONEAPI_ROOT')
+        if home is None:
+            icpx = _find_icpx()
+            if icpx is not None:
+                # bin/ -> latest/ -> compiler/ -> oneapi root
+                home = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(icpx))))
+            else:
+                home = '/opt/intel/oneapi'
     else:  # rocm/hip
         # Find ROCm home
         home = os.environ.get('ROCM_HOME') or os.environ.get('ROCM_PATH')
@@ -34,12 +44,17 @@ def _find_platform_home(platform):
 
 
 def _detect_platform():
-    """Detect whether to use CUDA or HIP based on available tools."""
+    """Detect whether to use CUDA, HIP or XPU based on available tools."""
+    forced = os.environ.get("TMS_PLATFORM")
+    if forced:
+        return forced
     # Check for HIP first (since it might be preferred on AMD systems)
     if shutil.which("hipcc") is not None:
         return "hip"
     elif shutil.which("nvcc") is not None:
         return "cuda"
+    elif _find_icpx() is not None:
+        return "xpu"
     else:
         # Default to CUDA if neither is found
         return "cuda"
@@ -65,14 +80,32 @@ class build_platform_ext(build_ext):
             self.compiler.set_executable("compiler_so", "hipcc")
             self.compiler.set_executable("compiler_cxx", "hipcc")
             self.compiler.set_executable("linker_so", "hipcc --shared")
-            
+
             # Add extra compiler and linker flags for HIP
             for ext in self.extensions:
                 ext.extra_compile_args = ['-fPIC']
                 ext.extra_link_args = ['-shared']
+
+        if self.platform == "xpu":
+            # Set icpx (Intel oneAPI SYCL compiler) for XPU, ABI-matched to torch.
+            icpx = _resolve_xpu_icpx()
+            self.compiler.set_executable("compiler_so", icpx)
+            self.compiler.set_executable("compiler_cxx", icpx)
+            self.compiler.set_executable("linker_so", f"{icpx} -shared")
+            for ext in self.extensions:
+                ext.extra_compile_args = ext.extra_compile_args + ['-fPIC', '-fsycl', '-fsycl-targets=spir64']
+                ext.extra_link_args = ext.extra_link_args + ['-fsycl', '-fsycl-targets=spir64', '-shared']
         # For CUDA, use default compiler (no special setup needed)
-        
+
         build_ext.build_extensions(self)
+
+    def finalize_options(self):
+        if self.platform == "xpu":
+            icpx = _resolve_xpu_icpx()
+            os.environ["CC"] = icpx
+            os.environ["CXX"] = icpx
+            os.environ["LDSHARED"] = icpx + " -shared"
+        super().finalize_options()
 
 
 def _create_ext_modules(platform):
@@ -102,6 +135,12 @@ def _create_ext_modules(platform):
         library_dirs = [str(platform_home.resolve() / 'lib')]
         libraries = ['amdhip64', 'dl']
         platform_macros = [('USE_ROCM', '1'), ('__HIP_PLATFORM_AMD__', '1')]
+    elif platform == "xpu":
+        sources.append('csrc/hardware_xpu_support.cpp')
+        icpx = _resolve_xpu_icpx()
+        include_dirs, library_dirs = _icpx_oneapi_include_lib(icpx)
+        libraries = ['sycl', 'ze_loader']
+        platform_macros = [('USE_XPU', '1')]
     else:  # cuda
         include_dirs = [str((platform_home / 'include').resolve())]
         library_dirs = [
@@ -126,6 +165,16 @@ def _create_ext_modules(platform):
     else:
         name_suffix = ""
 
+    # XPU only supports hook_mode='torch'
+    hook_variants = [
+        (f'torch_memory_saver_hook_mode_torch{name_suffix}', [('TMS_HOOK_MODE_TORCH', '1')]),
+    ]
+    if platform != "xpu":
+        hook_variants.insert(
+            0,
+            (f'torch_memory_saver_hook_mode_preload{name_suffix}', [('TMS_HOOK_MODE_PRELOAD', '1')]),
+        )
+
     ext_modules = [
         PlatformExtension(
             name,
@@ -142,13 +191,116 @@ def _create_ext_modules(platform):
             py_limited_api=True,
             extra_compile_args=extra_compile_args,
         )
-        for name, extra_macros in [
-            (f'torch_memory_saver_hook_mode_preload{name_suffix}', [('TMS_HOOK_MODE_PRELOAD', '1')]),
-            (f'torch_memory_saver_hook_mode_torch{name_suffix}', [('TMS_HOOK_MODE_TORCH', '1')]),
-        ]
+        for name, extra_macros in hook_variants
     ]
 
     return ext_modules
+
+
+# ============================== For Intel XPU ==============================
+def _find_icpx():
+    """Return the absolute path to icpx (Intel oneAPI SYCL compiler).
+
+    Honors $ICPX, then $PATH, then $ONEAPI_ROOT and common install locations.
+    """
+    explicit = os.environ.get("ICPX")
+    if explicit and os.path.isfile(explicit):
+        return explicit
+    found = shutil.which("icpx")
+    if found:
+        return found
+    oneapi_root = os.environ.get("ONEAPI_ROOT")
+    search_roots = ([oneapi_root] if oneapi_root else []) + ['/opt/intel/oneapi']
+    for root in search_roots:
+        guess = os.path.join(root, 'compiler', 'latest', 'bin', 'icpx')
+        if os.path.isfile(guess):
+            return guess
+    return None
+
+
+def _sycl_major_from_version_hpp(include_root):
+    """__LIBSYCL_MAJOR_VERSION from <include_root>/sycl/version.hpp, or None."""
+    import re
+    try:
+        text = open(os.path.join(include_root, "sycl", "version.hpp")).read()
+    except OSError:
+        return None
+    m = re.search(r"__LIBSYCL_MAJOR_VERSION\s+(\d+)", text)
+    return int(m.group(1)) if m else None
+
+
+def _icpx_sycl_major(icpx):
+    """libsycl major that `icpx` builds against (NEEDED libsycl.so.<major>), or None.
+
+    compiler/<ver>/bin/icpx -> compiler/<ver>/include/sycl/version.hpp.
+    """
+    if not icpx:
+        return None
+    base = os.path.dirname(os.path.dirname(os.path.realpath(icpx)))  # compiler/<ver>
+    return _sycl_major_from_version_hpp(os.path.join(base, "include"))
+
+
+def _torch_sycl_major():
+    """libsycl major the installed torch.xpu needs (from libtorch_xpu.so), or None."""
+    import re
+    try:
+        import torch
+    except Exception:
+        return None
+    lib = os.path.join(os.path.dirname(torch.__file__), "lib", "libtorch_xpu.so")
+    try:
+        out = subprocess.run(["readelf", "-d", lib], capture_output=True, text=True).stdout
+    except Exception:
+        return None
+    m = re.search(r"libsycl\.so\.(\d+)", out)
+    return int(m.group(1)) if m else None
+
+
+_RESOLVED_XPU_ICPX = None
+
+
+def _resolve_xpu_icpx():
+    """Pick an icpx whose libsycl major matches torch (mismatch corrupts the SYCL
+    runtime at load). Use the default icpx if it matches, torch's need is unknown,
+    or ICPX is pinned; else scan installed oneAPI compilers for a match.
+    """
+    global _RESOLVED_XPU_ICPX
+    if _RESOLVED_XPU_ICPX is not None:
+        return _RESOLVED_XPU_ICPX
+    import glob
+    icpx = _find_icpx()
+    if icpx is None:
+        raise RuntimeError(
+            "Cannot find icpx (Intel oneAPI C++ compiler). Install oneAPI, "
+            "source setvars.sh, or set ICPX=/path/to/icpx."
+        )
+    want = _torch_sycl_major()
+    # Auto-switch only when needed and the user has not pinned ICPX explicitly.
+    if want is not None and not os.environ.get("ICPX") and _icpx_sycl_major(icpx) != want:
+        match = next(
+            (c for c in sorted(glob.glob("/opt/intel/oneapi/compiler/*/bin/icpx"), reverse=True)
+             if _icpx_sycl_major(c) == want),
+            None,
+        )
+        if match is None:
+            raise RuntimeError(
+                f"No Intel oneAPI compiler builds against libsycl.so.{want} (needed by your "
+                f"torch+xpu). Install a matching oneAPI, or set ICPX=/path/to/matching/icpx."
+            )
+        print(f"[torch_memory_saver] using {match} to match torch's libsycl.so.{want}")
+        icpx = match
+    _RESOLVED_XPU_ICPX = icpx
+    return icpx
+
+
+def _icpx_oneapi_include_lib(icpx):
+    """(include_dirs, library_dirs) from icpx's own compiler dir, so headers+libs
+    match the compiler we picked regardless of the sourced ONEAPI_ROOT."""
+    base = os.path.dirname(os.path.dirname(os.path.realpath(icpx)))  # compiler/<ver>
+    include_dirs = [os.path.join(base, "include"), os.path.join(base, "include", "sycl")]
+    library_dirs = [os.path.join(base, "lib")]
+    return include_dirs, library_dirs
+# =====================================================================
 
 
 # Detect platform and set up accordingly

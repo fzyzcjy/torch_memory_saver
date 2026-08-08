@@ -170,6 +170,15 @@ namespace CUDAUtils {
         return ans;
     }
 
+#elif defined(USE_XPU)
+    [[maybe_unused]] static CUdevice cu_device_get(int device_ordinal) {
+        return static_cast<CUdevice>(device_ordinal);
+    }
+
+    [[maybe_unused]] static CUdevice cu_ctx_get_device() {
+        return 0;
+    }
+
 #else
     #error "USE_PLATFORM is not set"
 

@@ -90,7 +90,9 @@ void tms_torch_free(void *ptr, ssize_t ssize, int device, cudaStream_t stream) {
               << " ptr=" << ptr << " ssize=" << ssize << " device=" << device << " stream=" << stream
               << std::endl;
 #endif
+#if !defined(USE_XPU)
     SIMPLE_CHECK(thread_local_config.is_interesting_region(), "only support interesting region");
+#endif
     CUDA_ERROR_CHECK(TorchMemorySaver::instance().free(ptr));
 }
 }
@@ -141,17 +143,48 @@ void set_memory_margin_bytes(uint64_t value) {
     TorchMemorySaver::instance().set_memory_margin_bytes(value);
 }
 
-void tms_pause(const char* tag) {
+int tms_pause(const char* tag) {
     std::string tag_str = (tag != nullptr) ? std::string(tag) : "";
-    TorchMemorySaver::instance().pause(tag_str);
+    return static_cast<int>(TorchMemorySaver::instance().pause(tag_str));
 }
 
-void tms_resume(const char* tag) {
+int tms_resume(const char* tag) {
     std::string tag_str = (tag != nullptr) ? std::string(tag) : "";
-    TorchMemorySaver::instance().resume(tag_str);
+    return static_cast<int>(TorchMemorySaver::instance().resume(tag_str));
 }
 
 uint8_t* tms_get_cpu_backup_pointer(const uint8_t* gpu_ptr, uint64_t size) {
     return TorchMemorySaver::instance().get_cpu_backup_pointer(gpu_ptr, size);
 }
+
+#if defined(USE_XPU)
+void tms_xpu_prewarm_devices(int n_devices) {
+    XPUImplementation::xpu_prewarm_devices(n_devices);
+}
+
+uint64_t tms_xpu_device_free_bytes(int device_id) {
+    return XPUImplementation::xpu_device_free_bytes(device_id);
+}
+
+uint64_t tms_xpu_committed_bytes(int device_id) {
+    return TorchMemorySaver::instance().xpu_committed_bytes(device_id);
+}
+
+uint64_t tms_xpu_leaked_bytes(int device_id) {
+    return TorchMemorySaver::instance().xpu_leaked_bytes(device_id);
+}
+
+uint64_t tms_xpu_tracked_bytes(int device_id) {
+    return TorchMemorySaver::instance().xpu_tracked_bytes(device_id);
+}
+
+uint32_t tms_xpu_affected_devices(const char* tag, int* out_device_ids, uint32_t capacity) {
+    return TorchMemorySaver::instance().xpu_affected_devices(tag, out_device_ids, capacity);
+}
+
+// Test-only: returns the error instead of aborting, so fault injection can observe it.
+int tms_xpu_free(const void* ptr) {
+    return static_cast<int>(TorchMemorySaver::instance().free(const_cast<void*>(ptr)));
+}
+#endif
 }
