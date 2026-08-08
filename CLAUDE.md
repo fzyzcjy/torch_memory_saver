@@ -7,11 +7,6 @@
 
 ## Design and invariants
 
-- Put genuinely shared behavior behind a small backend-neutral layer. Isolate unavoidable platform differences in cohesive backend files or adapters; do not duplicate whole implementations or setup branches.
-- Extract repeated logic into the narrowest cohesive function, class, or module, and follow adjacent repository structure for configuration, file placement, and lifecycle handling.
-- Preserve entry points used by known downstream consumers; check real call sites before removing or renaming an API. Do not expose internal controls or add compatibility machinery for hypothetical consumers.
-- Keep region and configuration state thread-local. Scoped APIs must restore the exact prior tag and enable or backup flags on every exit path, including nested scopes.
-- MemPool cache keys must include every allocation-affecting configuration value and the device, so allocations with different tags or backup modes cannot share a pool accidentally.
 - Treat impossible internal states and invalid lifecycle calls as programmer errors: assert or fail fast instead of adding recoverable error plumbing. For explicitly recoverable runtime failures, propagate the error and preserve the promised recovery contract.
 - Prefer direct data flow and standard lifecycle mechanisms. Remove redundant state, ad hoc cleanup registries, and intermediate error-message plumbing when they add no behavior.
 
