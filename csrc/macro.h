@@ -65,6 +65,45 @@
 
 #define TMS_ROCM_LEGACY_CHUNKED 0
 
+#elif defined(USE_XPU)
+#include <cstddef>
+
+typedef int CUresult;
+typedef int cudaError_t;
+typedef int CUdevice;        // device ordinal
+typedef void *cudaStream_t;  // unused on XPU
+
+#define CUDA_SUCCESS 0
+#define cudaSuccess 0
+#define cudaErrorMemoryAllocation 2
+#define cudaErrorInvalidDevicePointer 17
+
+inline const char *cudaGetErrorString(cudaError_t err) {
+    switch (err) {
+        case cudaSuccess: return "cudaSuccess";
+        case cudaErrorMemoryAllocation: return "out of memory";
+        case cudaErrorInvalidDevicePointer: return "invalid device pointer";
+        default: return "unknown XPU error";
+    }
+}
+
+typedef int cudaMemcpyKind;
+#define cudaMemcpyDeviceToHost 0
+#define cudaMemcpyHostToDevice 1
+
+inline cudaError_t cudaMallocHost(void **ptr, size_t size) {
+    (void)size;
+    *ptr = nullptr;
+    return cudaErrorMemoryAllocation;
+}
+
+inline cudaError_t cudaMemcpy(void *dst, const void *src, size_t size, cudaMemcpyKind kind) {
+    (void)dst; (void)src; (void)size; (void)kind;
+    return cudaErrorMemoryAllocation;
+}
+
+#define TMS_ROCM_LEGACY_CHUNKED 0
+
 #else
 #error "USE_PLATFORM is not set"
 #endif

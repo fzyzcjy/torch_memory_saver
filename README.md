@@ -101,6 +101,37 @@ torch_memory_saver.hook_mode = "torch"
 
 Please refer to `rl_example.py` for details.
 
+## Platform Support
+
+| Platform | Backend | Hook modes | Install |
+|----------|---------|------------|---------|
+| NVIDIA (CUDA) | CUDA VMM (`cuMemMap`/`cuMemCreate`) | preload, torch | `pip install torch_memory_saver` (prebuilt wheel) |
+| AMD (ROCm) | HIP VMM (`hipMemMap`/`hipMemCreate`) | preload, torch | `pip install torch_memory_saver` (prebuilt wheel) |
+| Intel (XPU) | Level Zero VMM (`zeVirtualMemMap`/`zePhysicalMemCreate`) | torch only | `pip install` from source (builds against local oneAPI) |
+
+### Intel XPU
+
+Same pause/resume behavior on Intel GPUs via Level Zero VMM, wired into PyTorch
+through `XPUPluggableAllocator` + `torch.xpu.MemPool`. Only `hook_mode="torch"`
+is supported (preload is CUDA/HIP-specific); pauseable CUDA-graph capture is not.
+
+Install from source (no prebuilt wheel). `TMS_PLATFORM=xpu` forces the backend;
+`--no-build-isolation` lets the build see `torch+xpu` and ABI-match `libsycl` to
+it (otherwise a mismatched oneAPI silently produces a broken `.so`):
+
+```bash
+# Prerequisites: torch+xpu, Intel oneAPI (icpx) + Level Zero headers.
+source /opt/intel/oneapi/setvars.sh          # put icpx on PATH (or set ICPX=...)
+TMS_PLATFORM=xpu pip install --no-build-isolation .   # or `make build-xpu`
+```
+
+If the sourced oneAPI's `libsycl` major differs from your torch runtime's, pin a
+matching compiler with `ICPX=/opt/intel/oneapi/compiler/<ver>/bin/icpx`. Then use
+`region`/`pause`/`resume` as on CUDA with `hook_mode="torch"`, `device="xpu"`.
+
+Note: `torch.xpu.memory_allocated()` / `mem_get_info()` do not reflect pages
+released by `zeVirtualMemUnmap`; use sysman (`ZES_ENABLE_SYSMAN=1`) to verify.
+
 ## Development
 
 ```bash

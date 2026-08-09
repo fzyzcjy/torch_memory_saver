@@ -38,6 +38,10 @@ build-wheel-multi-cuda:
 build-wheel-multi-cuda-aarch64:
 	ARCH=aarch64 PYTHON_VERSION=3.10 bash scripts/build_multi_cuda.sh
 
+.PHONY:build-xpu
+build-xpu:
+	TMS_PLATFORM=xpu pip install --no-build-isolation .
+
 .PHONY:build-sdist
 build-sdist:
 	# python3 -m build --no-isolation

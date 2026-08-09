@@ -5,21 +5,27 @@ from torch_memory_saver import torch_memory_saver
 
 import time
 
-from torch_memory_saver.testing_utils import get_and_print_gpu_memory
+from torch_memory_saver.testing_utils import (
+    empty_cache,
+    get_and_print_gpu_memory,
+    get_device,
+)
 
 
 def run(hook_mode: str):
     torch_memory_saver.hook_mode = hook_mode
     logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
 
-    normal_tensor = torch.full((1_000_000,), 100, dtype=torch.uint8, device='cuda')
+    device = get_device()
+
+    normal_tensor = torch.full((1_000_000,), 100, dtype=torch.uint8, device=device)
     # Currently AMD - ROCm Implementation require the below tensor size
-    # normal_tensor = torch.full((1_000_000_0,), 100, dtype=torch.uint8, device='cuda')
+    # normal_tensor = torch.full((1_000_000_0,), 100, dtype=torch.uint8, device=device)
 
     with torch_memory_saver.region():
-        pauseable_tensor = torch.full((1_000_000_000,), 100, dtype=torch.uint8, device='cuda')
+        pauseable_tensor = torch.full((1_000_000_000,), 100, dtype=torch.uint8, device=device)
         # Currently AMD - ROCm Implementation require the below tensor size
-        # pauseable_tensor = torch.full((1_000_000_000_0,), 100, dtype=torch.uint8, device='cuda')
+        # pauseable_tensor = torch.full((1_000_000_000_0,), 100, dtype=torch.uint8, device=device)
 
     original_address = pauseable_tensor.data_ptr()
     print(f"Pauseable tensor virtual address: 0x{original_address:x}")
@@ -54,13 +60,13 @@ def run(hook_mode: str):
     print(f'{normal_tensor=} {pauseable_tensor=}')
 
     get_and_print_gpu_memory("Before empty cache")
-    torch.cuda.empty_cache()
+    empty_cache()
     get_and_print_gpu_memory("After empty cache")
 
     del normal_tensor, pauseable_tensor
 
     get_and_print_gpu_memory("Before empty cache (tensor deleted)")
-    torch.cuda.empty_cache()
+    empty_cache()
     get_and_print_gpu_memory("After empty cache (tensor deleted)")
 
 
