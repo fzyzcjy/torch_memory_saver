@@ -29,6 +29,11 @@ _HOOK_MODES = ["torch"] if _IS_XPU else ["preload", "torch"]
 # Skip reason for tests that exercise CUDA/HIP-only paths on XPU.
 _skip_on_xpu = pytest.mark.skipif(_IS_XPU, reason="CUDA/HIP-only path, not supported on XPU")
 _xpu_only = pytest.mark.skipif(not _IS_XPU, reason="XPU-specific path")
+_device_module = torch.xpu if _IS_XPU else torch.cuda
+_multi_device_only = pytest.mark.skipif(
+    _device_module.device_count() < 2,
+    reason="Multi-device test requires at least two devices",
+)
 
 
 @pytest.mark.parametrize("hook_mode", _HOOK_MODES)
@@ -54,11 +59,13 @@ def test_disk_backup(hook_mode):
 
 
 @_skip_on_xpu
+@_multi_device_only
 @pytest.mark.parametrize("hook_mode", _HOOK_MODES)
 def test_multi_device(hook_mode):
     _test_core(multi_device.run, hook_mode=hook_mode)
 
 
+@_multi_device_only
 def test_multi_device_torch_mode():
     _test_core(multi_device_torch_mode.run, hook_mode="torch")
 
