@@ -85,7 +85,6 @@ public:
     bool get_retain_cpu_backup() const {
         return retain_cpu_backup_.load();
     }
-    void release_cpu_backups();
     uint8_t* get_cpu_backup_pointer(const uint8_t* query_gpu_ptr, uint64_t query_size);
     void set_disk_backup_dir(const std::string& dir) {
         const std::lock_guard<std::mutex> lock(allocator_metadata_mutex_);

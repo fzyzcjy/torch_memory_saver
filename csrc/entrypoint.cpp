@@ -159,10 +159,6 @@ bool tms_get_retain_cpu_backup() {
 #endif
 }
 
-void tms_release_cpu_backups() {
-    TorchMemorySaver::instance().release_cpu_backups();
-}
-
 int tms_pause(const char* tag) {
     std::string tag_str = (tag != nullptr) ? std::string(tag) : "";
     return static_cast<int>(TorchMemorySaver::instance().pause(tag_str));

@@ -159,15 +159,6 @@ class _TorchMemorySaverImpl:
             # HIP/SYCL runtime static dtors may run before MemPool's at exit
             # (destruction-order fiasco); free pools via atexit while runtime alive.
             atexit.register(self._mem_pools.clear)
-        else:
-            # Destroy pools while CUDA and the allocator configuration are
-            # alive, then release any backups not owned by a Python MemPool.
-            atexit.register(self._cleanup_cuda_at_exit)
-
-    def _cleanup_cuda_at_exit(self):
-        self._binary_wrapper.cdll.tms_set_interesting_region(True)
-        self._mem_pools.clear()
-        self._binary_wrapper.cdll.tms_release_cpu_backups()
 
     @contextmanager
     def region(self, tag: str, enable_cpu_backup: bool, enable_disk_backup: bool):

@@ -283,18 +283,6 @@ cudaError_t TorchMemorySaver::resume(const std::string& tag) {
 #endif
 }
 
-void TorchMemorySaver::release_cpu_backups() {
-#ifdef USE_CUDA
-    const std::lock_guard<std::mutex> lock(allocator_metadata_mutex_);
-    for (auto& [ptr, metadata] : allocation_metadata_) {
-        if (metadata.cpu_backup != nullptr) {
-            CUDA_ERROR_CHECK(cudaFreeHost(metadata.cpu_backup));
-            metadata.cpu_backup = nullptr;
-        }
-    }
-#endif
-}
-
 uint8_t* TorchMemorySaver::get_cpu_backup_pointer(const uint8_t* query_gpu_ptr, uint64_t query_size) {
     const std::lock_guard <std::mutex> lock(allocator_metadata_mutex_);
 

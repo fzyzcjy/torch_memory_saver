@@ -82,7 +82,7 @@ to expose the retained backup after resume.
 
 The policy is consulted on resume. Setting it to `False` does not eagerly free
 backups for active allocations; they are released by a later non-retaining
-resume, when the allocation is freed, or during process cleanup.
+resume, when the allocation is freed, or when the process exits.
 
 ### Hook Modes
 
