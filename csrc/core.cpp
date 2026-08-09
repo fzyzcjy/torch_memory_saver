@@ -4,7 +4,11 @@
 #include "api_forwarder.h"
 
 TorchMemorySaver::TorchMemorySaver()
-    : disk_backend_(compute_disk_backup_dir_from_env(), compute_disk_chunk_bytes_from_env()) {}
+    : disk_backend_(compute_disk_backup_dir_from_env(), compute_disk_chunk_bytes_from_env()) {
+#ifdef USE_CUDA
+    retain_cpu_backup_.store(get_bool_env_var("TMS_RETAIN_CPU_BACKUP"));
+#endif
+}
 
 TorchMemorySaver &TorchMemorySaver::instance() {
     static TorchMemorySaver instance;
@@ -222,6 +226,7 @@ cudaError_t TorchMemorySaver::resume(const std::string& tag) {
 
 #else
     const std::lock_guard <std::mutex> lock(allocator_metadata_mutex_);
+    const bool retain_cpu_backup = retain_cpu_backup_.load();
 
     for (auto it = allocation_metadata_.begin(); it != allocation_metadata_.end(); ++it) {
         void *ptr = it->first;
@@ -253,10 +258,10 @@ cudaError_t TorchMemorySaver::resume(const std::string& tag) {
             // TODO may use cudaMemcpyAsync if needed
             CUDA_ERROR_CHECK(cudaMemcpy(ptr, metadata.cpu_backup, metadata.raw_size, cudaMemcpyHostToDevice));
 
-            // TODO may provide a flag to choose whether to free immediately
-            // (users may want to lazily free to reduce re-alloc time)
-            CUDA_ERROR_CHECK(cudaFreeHost(metadata.cpu_backup));
-            metadata.cpu_backup = nullptr;
+            if (!retain_cpu_backup) {
+                CUDA_ERROR_CHECK(cudaFreeHost(metadata.cpu_backup));
+                metadata.cpu_backup = nullptr;
+            }
         } else if (metadata.enable_disk_backup) {
             disk_backend_.onload(ptr, metadata.raw_size, metadata.disk);
         }
@@ -298,7 +303,9 @@ uint8_t* TorchMemorySaver::get_cpu_backup_pointer(const uint8_t* query_gpu_ptr, 
                 return nullptr;
             }
             if (metadata.state == AllocationState::ACTIVE) {
-                return nullptr;
+                return metadata.cpu_backup == nullptr
+                    ? nullptr
+                    : (uint8_t*) metadata.cpu_backup + offset;
             } else {
                 SIMPLE_CHECK(nullptr != metadata.cpu_backup,
                     "get_cpu_backup_pointer: found paused allocation but cpu_backup does not exist, do you forget to enable cpu backup");

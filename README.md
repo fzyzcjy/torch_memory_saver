@@ -68,6 +68,22 @@ torch_memory_saver.resume()
 assert tensor1[0] == 42, "content is kept unchanged"
 ```
 
+On CUDA, pinned CPU backups can be retained across resume cycles to avoid
+reallocating them before every pause:
+
+```python
+torch_memory_saver.retain_cpu_backup = True
+```
+
+Set `TMS_RETAIN_CPU_BACKUP=1` before process startup to enable the same policy,
+including for preload mode. Retention is CUDA-only and can consume pinned RAM
+equal to the backed-up allocations. While enabled, `get_cpu_backup` continues
+to expose the retained backup after resume.
+
+The policy is consulted on resume. Setting it to `False` does not eagerly free
+backups for active allocations; they are released by a later non-retaining
+resume, when the allocation is freed, or when the process exits.
+
 ### Hook Modes
 
 There are two hook modes:

@@ -79,6 +79,12 @@ public:
         memory_margin_bytes_.store(value);
 #endif
     }
+    void set_retain_cpu_backup(bool value) {
+        retain_cpu_backup_.store(value);
+    }
+    bool get_retain_cpu_backup() const {
+        return retain_cpu_backup_.load();
+    }
     uint8_t* get_cpu_backup_pointer(const uint8_t* query_gpu_ptr, uint64_t query_size);
     void set_disk_backup_dir(const std::string& dir) {
         const std::lock_guard<std::mutex> lock(allocator_metadata_mutex_);
@@ -101,6 +107,7 @@ private:
     std::mutex allocator_metadata_mutex_;
     std::unordered_map<void*, AllocationMetadata> allocation_metadata_;
     std::atomic<uint64_t> memory_margin_bytes_ = 0;
+    std::atomic<bool> retain_cpu_backup_ = false;
 
     // Guarded by allocator_metadata_mutex_.
     DiskBackend disk_backend_;

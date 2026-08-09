@@ -37,6 +37,8 @@ def _setup_function_signatures(cdll):
     cdll.tms_resume.argtypes = [ctypes.c_char_p]
     cdll.tms_resume.restype = ctypes.c_int
     cdll.set_memory_margin_bytes.argtypes = [ctypes.c_uint64]
+    cdll.tms_set_retain_cpu_backup.argtypes = [ctypes.c_bool]
+    cdll.tms_get_retain_cpu_backup.restype = ctypes.c_bool
     cdll.tms_get_cpu_backup_pointer.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint64]
     cdll.tms_get_cpu_backup_pointer.restype = ctypes.POINTER(ctypes.c_uint8)
 

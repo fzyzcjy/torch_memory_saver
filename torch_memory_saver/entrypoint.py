@@ -102,6 +102,16 @@ class TorchMemorySaver:
             )
         self._impl._binary_wrapper.cdll.set_memory_margin_bytes(value)
 
+    @property
+    def retain_cpu_backup(self) -> bool:
+        self._ensure_initialized()
+        return self._impl._binary_wrapper.cdll.tms_get_retain_cpu_backup()
+
+    @retain_cpu_backup.setter
+    def retain_cpu_backup(self, value: bool):
+        self._ensure_initialized()
+        self._impl._binary_wrapper.cdll.tms_set_retain_cpu_backup(value)
+
     def get_cpu_backup(self, x: torch.Tensor, zero_copy: bool = False):
         self._ensure_initialized()
         return self._impl.get_cpu_backup(x, zero_copy=zero_copy)
