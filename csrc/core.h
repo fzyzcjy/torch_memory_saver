@@ -8,6 +8,7 @@
 #include <vector>
 #include "utils.h"
 #include "macro.h"
+#include "cpu_backup.h"
 #include "disk_backend.h"
 
 #if TMS_ROCM_LEGACY_CHUNKED
@@ -31,7 +32,7 @@ struct AllocationMetadata {
     std::string tag;
     AllocationState state;
     bool enable_cpu_backup;
-    void* cpu_backup;
+    CpuBackupSlot cpu_backup;
     bool enable_disk_backup;
     DiskBackupSlot disk;
 
@@ -60,6 +61,7 @@ public:
         size_t raw_size,
         const std::string& tag,
         bool enable_cpu_backup,
+        CpuBackupKind cpu_backup_kind,
         bool enable_disk_backup);
     cudaError_t free(void *ptr);
 

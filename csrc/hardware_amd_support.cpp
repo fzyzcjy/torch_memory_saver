@@ -133,6 +133,7 @@ namespace ROCmHIPImplementation {
         size_t raw_size,
         const std::string& tag, 
         bool enable_cpu_backup,
+        CpuBackupKind cpu_backup_kind,
         std::unordered_map<void*, AllocationMetadata>& allocation_metadata,
         std::mutex& allocator_metadata_mutex
     ) {
@@ -193,7 +194,7 @@ namespace ROCmHIPImplementation {
                     tag,
                     AllocationState::ACTIVE,
                     enable_cpu_backup,
-                    nullptr,
+                    CpuBackupSlot{cpu_backup_kind, nullptr, 0},
                     false,
                     DiskBackupSlot{},
                     aligned_size,
@@ -234,10 +235,7 @@ namespace ROCmHIPImplementation {
         // Free the reserved address using stored aligned_size
         CURESULT_CHECK(hipMemAddressFree((hipDeviceptr_t)ptr, metadata.aligned_size));
 
-        if (nullptr != metadata.cpu_backup) {
-            CUDA_ERROR_CHECK(hipFreeHost(metadata.cpu_backup));
-            metadata.cpu_backup = nullptr;
-        }
+        cpu_backup_release(metadata.cpu_backup);
 
 #ifdef TMS_DEBUG_LOG
         std::cout << "[torch_memory_saver.cpp] TorchMemorySaver.cuda_free "
@@ -275,11 +273,7 @@ namespace ROCmHIPImplementation {
 
             // Copy data to CPU backup if enabled
             if (metadata.enable_cpu_backup) {
-                if (nullptr == metadata.cpu_backup) {
-                    CUDA_ERROR_CHECK(hipMallocHost(&metadata.cpu_backup, metadata.aligned_size));
-                }
-                SIMPLE_CHECK(metadata.cpu_backup != nullptr, "cpu_backup should not be nullptr");
-                CUDA_ERROR_CHECK(cudaMemcpy(metadata.cpu_backup, ptr, metadata.aligned_size, hipMemcpyDeviceToHost));
+                cpu_backup_offload(ptr, metadata.aligned_size, metadata.cpu_backup);
             }
 
             // Unmap and release chunks (but keep metadata for resume)
@@ -325,10 +319,10 @@ namespace ROCmHIPImplementation {
             // Create new handles and map chunks
             cu_mem_create_and_map(metadata.device, metadata.aligned_size, (hipDeviceptr_t)ptr, metadata.allocHandles, metadata.chunk_sizes);
 
-            // Restore from CPU backup if enabled
+            // Restore from CPU backup if enabled. Keep the pinned host buffer
+            // across resume (legacy ROCm behavior); free happens in rocm_free.
             if (metadata.enable_cpu_backup) {
-                SIMPLE_CHECK(metadata.cpu_backup != nullptr, "cpu_backup should not be nullptr");
-                CUDA_ERROR_CHECK(cudaMemcpy(ptr, metadata.cpu_backup, metadata.aligned_size, hipMemcpyHostToDevice));
+                cpu_backup_onload(ptr, metadata.aligned_size, metadata.cpu_backup);
             }
 
             metadata.state = AllocationState::ACTIVE;
