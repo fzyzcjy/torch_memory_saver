@@ -97,6 +97,20 @@ The mode can be chosen by:
 torch_memory_saver.hook_mode = "torch"
 ```
 
+Custom implementations can register a lazy factory:
+
+```python
+from torch_memory_saver import torch_memory_saver, register_hook_mode
+
+register_hook_mode("custom", lambda: CustomMemorySaver(), uses_preload=False)
+torch_memory_saver.hook_mode = "custom"
+```
+
+The implementation must provide `region`, `cuda_graph`, `pause`, and `resume`
+(plus any other facade method you call). Select the mode before first use;
+`configure_subprocess()` skips the `LD_PRELOAD` setup for modes registered
+with `uses_preload=False`.
+
 ### Example of RL with CUDA Graph
 
 Please refer to `rl_example.py` for details.

@@ -6,7 +6,7 @@ import logging
 import os
 from collections import defaultdict
 from contextlib import contextmanager
-from typing import Optional
+from typing import Any, Callable, Dict, NamedTuple, Optional
 import torch
 
 from .binary_wrapper import BinaryWrapper
@@ -18,10 +18,32 @@ logger = logging.getLogger(__name__)
 _TAG_DEFAULT = "default"
 
 
+class _HookModeRegistration(NamedTuple):
+    factory: Callable[[], Any]
+    uses_preload: bool
+
+
+_HOOK_MODE_REGISTRY: Dict[str, _HookModeRegistration] = {}
+
+
+def register_hook_mode(name: str, factory: Callable[[], Any], *, uses_preload: bool = True) -> None:
+    """Register a process-global lazy factory for a hook mode.
+
+    Registered implementations must provide ``region``, ``cuda_graph``,
+    ``pause``, and ``resume`` (plus any other facade method the caller uses).
+    Factories are process-global and are not serialized with saver instances,
+    so registration must run in every process (e.g. under multiprocessing
+    spawn) before first use.
+    """
+    if name in _HOOK_MODE_REGISTRY:
+        raise ValueError(f"Hook mode {name!r} is already registered")
+    _HOOK_MODE_REGISTRY[name] = _HookModeRegistration(factory=factory, uses_preload=uses_preload)
+
+
 class TorchMemorySaver:
     def __init__(self):
         self._impl_ctor_kwargs = {}
-        self._impl: Optional[_TorchMemorySaverImpl] = None
+        self._impl: Optional[Any] = None
 
     @contextmanager
     def region(self, tag: str = _TAG_DEFAULT, enable_cpu_backup: bool = False,
@@ -81,8 +103,11 @@ class TorchMemorySaver:
         raise AttributeError
 
     @hook_mode.setter
-    def hook_mode(self, hook_mode: HookMode):
-        assert self._impl_ctor_kwargs is not None, "Cannot configure after initialization"
+    def hook_mode(self, hook_mode: str):
+        if self._impl is not None:
+            raise RuntimeError("Cannot configure after initialization")
+        if hook_mode not in _HOOK_MODE_REGISTRY:
+            raise ValueError(f"Unknown hook mode {hook_mode!r}")
         self._impl_ctor_kwargs["hook_mode"] = hook_mode
 
     @property
@@ -125,8 +150,22 @@ class TorchMemorySaver:
     def _ensure_initialized(self):
         if self._impl is not None:
             return
-        self._impl = _TorchMemorySaverImpl(**self._impl_ctor_kwargs)
-        del self._impl_ctor_kwargs
+        self._impl = self._registration().factory()
+
+    def _uses_preload(self) -> bool:
+        return self._registration().uses_preload
+
+    def _registration(self) -> _HookModeRegistration:
+        hook_mode = self._impl_ctor_kwargs.get("hook_mode", "preload")
+        try:
+            return _HOOK_MODE_REGISTRY[hook_mode]
+        except KeyError:
+            # e.g. a pickled saver arriving in a process that never ran the
+            # mode's register_hook_mode() call
+            raise RuntimeError(
+                f"Hook mode {hook_mode!r} is not registered in this process; "
+                "call register_hook_mode() before first use"
+            ) from None
 
 
 class _TorchMemorySaverImpl:
@@ -308,3 +347,9 @@ def _sanity_checks():
         raise RuntimeError(
             "TorchMemorySaver is disabled for the current process because expandable_segments is not supported yet."
         )
+
+
+register_hook_mode("preload", _TorchMemorySaverImpl, uses_preload=True)
+# uses_preload=True preserves the previously unconditional configure_subprocess()
+# LD_PRELOAD setup; the torch-mode allocator itself loads via dlopen.
+register_hook_mode("torch", lambda: _TorchMemorySaverImpl(hook_mode="torch"), uses_preload=True)
