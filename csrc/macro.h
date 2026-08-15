@@ -35,6 +35,8 @@
 #define cudaMemcpy hipMemcpy
 #define cudaMemGetInfo hipMemGetInfo
 #define cudaDeviceSynchronize hipDeviceSynchronize
+#define cudaGetDevice hipGetDevice
+#define cudaSetDevice hipSetDevice
 // --- Memory Copy Direction Constants ---
 #define cudaMemcpyDeviceToHost hipMemcpyDeviceToHost
 #define cudaMemcpyHostToDevice hipMemcpyHostToDevice

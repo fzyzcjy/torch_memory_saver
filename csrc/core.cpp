@@ -249,7 +249,8 @@ cudaError_t TorchMemorySaver::resume(const std::string& tag) {
         CUDAUtils::cu_mem_set_access(ptr, metadata.allocation_size, metadata.device);
 
         if (metadata.enable_cpu_backup) {
-            cpu_backuper::onload(ptr, metadata.raw_size, metadata.cpu_backup);
+            cpu_backuper::onload(
+                ptr, metadata.raw_size, metadata.device, metadata.cpu_backup);
             if (!retain_cpu_backup) {
                 cpu_backuper::release(metadata.cpu_backup);
             }

@@ -322,7 +322,8 @@ namespace ROCmHIPImplementation {
             // Restore from CPU backup if enabled. Keep the pinned host buffer
             // across resume (legacy ROCm behavior); free happens in rocm_free.
             if (metadata.enable_cpu_backup) {
-                cpu_backuper::onload(ptr, metadata.aligned_size, metadata.cpu_backup);
+                cpu_backuper::onload(
+                    ptr, metadata.aligned_size, metadata.device, metadata.cpu_backup);
             }
 
             metadata.state = AllocationState::ACTIVE;

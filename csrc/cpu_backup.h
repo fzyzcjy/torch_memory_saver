@@ -43,7 +43,7 @@ inline void offload(void*, size_t, CpuBackupSlot&) {
     SIMPLE_CHECK(false, "cpu_backuper::offload is not supported on XPU");
 }
 
-inline void onload(void*, size_t, const CpuBackupSlot&) {
+inline void onload(void*, size_t, CUdevice, const CpuBackupSlot&) {
     SIMPLE_CHECK(false, "cpu_backuper::onload is not supported on XPU");
 }
 
@@ -104,14 +104,20 @@ inline void offload(void* gpu_ptr, size_t size, CpuBackupSlot& slot) {
     CUDA_ERROR_CHECK(cudaMemcpy(slot.data, gpu_ptr, size, cudaMemcpyDeviceToHost));
 }
 
-inline void onload(void* gpu_ptr, size_t size, const CpuBackupSlot& slot) {
+inline void onload(void* gpu_ptr, size_t size, CUdevice device, const CpuBackupSlot& slot) {
     SIMPLE_CHECK(slot.data != nullptr, "cpu_backup missing on resume");
     SIMPLE_CHECK(slot.size == size, "cpu_backup slot size mismatch");
+    int original_device = -1;
+    if (slot.kind == CpuBackupKind::MMAP) {
+        CUDA_ERROR_CHECK(cudaGetDevice(&original_device));
+        CUDA_ERROR_CHECK(cudaSetDevice(static_cast<int>(device)));
+    }
     // TODO may use cudaMemcpyAsync if needed
     CUDA_ERROR_CHECK(cudaMemcpy(gpu_ptr, slot.data, size, cudaMemcpyHostToDevice));
     // Pageable H2D may return after staging while DMA is still in flight.
     if (slot.kind == CpuBackupKind::MMAP) {
         CUDA_ERROR_CHECK(cudaDeviceSynchronize());
+        CUDA_ERROR_CHECK(cudaSetDevice(original_device));
     }
 }
 

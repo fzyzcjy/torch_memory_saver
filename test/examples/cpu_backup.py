@@ -165,6 +165,49 @@ def run_retain_from_env(hook_mode: str):
     assert torch_memory_saver.retain_cpu_backup is True
 
 
+def run_multi_device_mmap_restore(hook_mode: str):
+    torch_memory_saver.hook_mode = hook_mode
+    tensor_size = 64 * 1024 * 1024
+    tensors: list[torch.Tensor] = []
+
+    for device_id, value in enumerate((7, 13)):
+        torch.cuda.set_device(device_id)
+        with torch_memory_saver.region(
+            tag=f"mmap_restore_{device_id}",
+            enable_cpu_backup=True,
+            cpu_backup_backend="mmap",
+        ):
+            tensors.append(
+                torch.full(
+                    (tensor_size,),
+                    value,
+                    dtype=torch.uint8,
+                    device=f"cuda:{device_id}",
+                )
+            )
+
+    for device_id in range(2):
+        torch.cuda.set_device(device_id)
+        torch_memory_saver.pause(tag=f"mmap_restore_{device_id}")
+
+    torch.cuda.set_device(0)
+    torch_memory_saver.resume()
+    assert torch.cuda.current_device() == 0
+
+    restored: list[torch.Tensor] = []
+    for device_id, (tensor, value) in enumerate(zip(tensors, (7, 13), strict=True)):
+        stream = torch.cuda.Stream(device=device_id)
+        with torch.cuda.stream(stream):
+            restored.append(tensor.clone())
+        stream.synchronize()
+        assert bool(torch.all(restored[-1] == value).item())
+
+    del tensors, restored
+    for device_id in range(2):
+        with torch.cuda.device(device_id):
+            torch.cuda.empty_cache()
+
+
 def run_backend_from_env(hook_mode: str):
     # TMS_INIT_CPU_BACKUP_BACKEND is set by the test harness (not here).
     torch_memory_saver.hook_mode = hook_mode

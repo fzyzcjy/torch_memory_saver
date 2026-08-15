@@ -54,6 +54,15 @@ def test_cpu_backup(hook_mode):
 
 
 @_skip_on_xpu
+@_multi_device_only
+@pytest.mark.skipif(torch.version.hip is not None, reason="mmap CPU backup is CUDA-only")
+@pytest.mark.parametrize("hook_mode", _HOOK_MODES)
+def test_cpu_backup_multi_device_mmap_restore(hook_mode):
+    """Restore mmap backups on each allocation's CUDA device."""
+    _test_core(cpu_backup.run_multi_device_mmap_restore, hook_mode=hook_mode)
+
+
+@_skip_on_xpu
 @pytest.mark.skipif(
     not torch.cuda.is_available()
     or torch.version.hip is not None
