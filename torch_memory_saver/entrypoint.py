@@ -6,7 +6,7 @@ import logging
 import os
 from collections import defaultdict
 from contextlib import contextmanager
-from typing import Optional
+from typing import Literal, Optional
 import torch
 
 from .binary_wrapper import BinaryWrapper
@@ -16,6 +16,7 @@ from .utils import is_xpu
 logger = logging.getLogger(__name__)
 
 _TAG_DEFAULT = "default"
+CpuBackupBackend = Literal["mmap", "pinned"]
 
 
 class TorchMemorySaver:
@@ -24,20 +25,35 @@ class TorchMemorySaver:
         self._impl: Optional[_TorchMemorySaverImpl] = None
 
     @contextmanager
-    def region(self, tag: str = _TAG_DEFAULT, enable_cpu_backup: bool = False,
-               enable_disk_backup: bool = False):
+    def region(
+        self,
+        tag: str = _TAG_DEFAULT,
+        enable_cpu_backup: bool = False,
+        enable_disk_backup: bool = False,
+        cpu_backup_backend: Optional[CpuBackupBackend] = None,
+    ):
         """Context manager for memory saving with optional tag.
 
-        enable_disk_backup spills paused memory to files instead of a pinned CPU
+        enable_disk_backup spills paused memory to files instead of a CPU
         buffer; mutually exclusive with enable_cpu_backup. The target directory is
         process-global (TMS_DISK_BACKUP_DIR or set_disk_backup_dir()), not
         region-scoped, and must be a real disk mount (not tmpfs).
+
+        cpu_backup_backend selects the host shadow when enable_cpu_backup is True:
+        "pinned" (default; cudaMallocHost/hipHostMalloc) or "mmap" (reclaimable
+        RSS on CUDA). ROCm is pinned-only. XPU uses pageable malloc and does not
+        take cpu_backup_backend.
         """
+        self._validate_cpu_backup_backend(enable_cpu_backup, cpu_backup_backend)
         self._ensure_initialized()
         assert not (enable_cpu_backup and enable_disk_backup), \
             "enable_cpu_backup and enable_disk_backup are mutually exclusive"
-        with self._impl.region(tag=tag, enable_cpu_backup=enable_cpu_backup,
-                               enable_disk_backup=enable_disk_backup):
+        with self._impl.region(
+            tag=tag,
+            enable_cpu_backup=enable_cpu_backup,
+            enable_disk_backup=enable_disk_backup,
+            cpu_backup_backend=cpu_backup_backend,
+        ):
             yield
 
     @contextmanager
@@ -45,13 +61,16 @@ class TorchMemorySaver:
             self,
             cuda_graph, pool=None, stream=None, capture_error_mode='global',
             tag: str = _TAG_DEFAULT, enable_cpu_backup: bool = False,
+            cpu_backup_backend: Optional[CpuBackupBackend] = None,
     ):
         """Similar to `torch.cuda.graph`, but ensures memory in it to be pauseable."""
+        self._validate_cpu_backup_backend(enable_cpu_backup, cpu_backup_backend)
         self._ensure_initialized()
         with self._impl.cuda_graph(
                 cuda_graph=cuda_graph,
                 pool=pool, stream=stream, capture_error_mode=capture_error_mode,
                 tag=tag, enable_cpu_backup=enable_cpu_backup,
+                cpu_backup_backend=cpu_backup_backend,
         ):
             yield
 
@@ -122,6 +141,22 @@ class TorchMemorySaver:
         os.makedirs(path, exist_ok=True)
         self._impl._binary_wrapper.cdll.tms_set_disk_backup_dir(path.encode("utf-8"))
 
+    def _validate_cpu_backup_backend(
+        self,
+        enable_cpu_backup: bool,
+        cpu_backup_backend: Optional[CpuBackupBackend],
+    ) -> None:
+        if cpu_backup_backend is None:
+            return
+        if not enable_cpu_backup:
+            raise ValueError("cpu_backup_backend requires enable_cpu_backup=True")
+        if is_xpu():
+            raise ValueError(
+                "cpu_backup_backend is not supported on XPU; host shadows use malloc"
+            )
+        if cpu_backup_backend == "mmap" and torch.version.hip:
+            raise ValueError("cpu_backup_backend='mmap' is not supported on ROCm")
+
     def _ensure_initialized(self):
         if self._impl is not None:
             return
@@ -161,52 +196,108 @@ class _TorchMemorySaverImpl:
             atexit.register(self._mem_pools.clear)
 
     @contextmanager
-    def region(self, tag: str, enable_cpu_backup: bool, enable_disk_backup: bool):
+    def region(
+        self,
+        tag: str,
+        enable_cpu_backup: bool,
+        enable_disk_backup: bool,
+        cpu_backup_backend: Optional[CpuBackupBackend],
+    ):
         if self._is_xpu and enable_disk_backup:
             raise NotImplementedError(
                 "TorchMemorySaver disk backup (enable_disk_backup=True) is not "
                 "supported on Intel XPU; use enable_cpu_backup=True instead."
             )
+        # See https://github.com/fzyzcjy/torch_memory_saver/pull/20#issuecomment-3047099047
+        # Key by device too: a MemPool is bound to its creation device, so a
+        # multi-device process must not reuse one device's pool on another.
+        # Include backend so torch-mode pool reuse cannot stick the first kind.
         device = self._current_device()
-        key = (tag, enable_cpu_backup, enable_disk_backup, device)
+        resolved_cpu_backup_backend = ""
+        if enable_cpu_backup:
+            resolved_cpu_backup_backend = (
+                cpu_backup_backend
+                or self._binary_wrapper.cdll.tms_get_cpu_backup_backend().decode("utf-8")
+            )
+        key = (
+            tag,
+            enable_cpu_backup,
+            enable_disk_backup,
+            resolved_cpu_backup_backend,
+            device,
+        )
         mem_pool = self._mem_pools[key]
         with self._device_module.use_mem_pool(mem_pool):
-            with self._with_region_config(tag=tag, enable_cpu_backup=enable_cpu_backup,
-                                          enable_disk_backup=enable_disk_backup):
+            with self._with_region_config(
+                tag=tag,
+                enable_cpu_backup=enable_cpu_backup,
+                enable_disk_backup=enable_disk_backup,
+                cpu_backup_backend=cpu_backup_backend,
+            ):
                 yield
 
     def _current_device(self) -> int:
         return self._device_module.current_device()
 
     @contextmanager
-    def cuda_graph(self, cuda_graph, pool, stream, capture_error_mode, tag: str, enable_cpu_backup: bool):
+    def cuda_graph(
+        self,
+        cuda_graph,
+        pool,
+        stream,
+        capture_error_mode,
+        tag: str,
+        enable_cpu_backup: bool,
+        cpu_backup_backend: Optional[CpuBackupBackend],
+    ):
         assert self._hook_mode == "preload", "Only hook_mode=preload supports pauseable CUDA Graph currently"
         with torch.cuda.graph(cuda_graph, pool=pool, stream=stream, capture_error_mode=capture_error_mode):
-            with self._with_region_config(tag=tag, enable_cpu_backup=enable_cpu_backup):
+            with self._with_region_config(
+                tag=tag,
+                enable_cpu_backup=enable_cpu_backup,
+                cpu_backup_backend=cpu_backup_backend,
+            ):
                 yield
 
     @contextmanager
-    def _with_region_config(self, tag: str, enable_cpu_backup: bool, enable_disk_backup: bool = False):
+    def _with_region_config(
+        self,
+        tag: str,
+        enable_cpu_backup: bool,
+        cpu_backup_backend: Optional[CpuBackupBackend],
+        enable_disk_backup: bool = False,
+    ):
         cdll = self._binary_wrapper.cdll
         orig_tag = cdll.tms_get_current_tag().decode("utf-8")
         orig_interesting_region = cdll.tms_get_interesting_region()
         orig_enable_cpu_backup = cdll.tms_get_enable_cpu_backup()
+        orig_cpu_backup_backend = cdll.tms_get_cpu_backup_backend().decode("utf-8")
         orig_enable_disk_backup = cdll.tms_get_enable_disk_backup()
+        expected_cpu_backup_backend = cpu_backup_backend or orig_cpu_backup_backend
 
-        self._binary_wrapper.set_config(tag=tag, interesting_region=True,
-                                        enable_cpu_backup=enable_cpu_backup,
-                                        enable_disk_backup=enable_disk_backup)
+        self._binary_wrapper.set_config(
+            tag=tag,
+            interesting_region=True,
+            enable_cpu_backup=enable_cpu_backup,
+            cpu_backup_backend=cpu_backup_backend,
+            enable_disk_backup=enable_disk_backup,
+        )
         try:
             yield
         finally:
             assert cdll.tms_get_interesting_region()
             assert cdll.tms_get_enable_cpu_backup() == enable_cpu_backup
+            assert (
+                cdll.tms_get_cpu_backup_backend().decode("utf-8")
+                == expected_cpu_backup_backend
+            )
             assert cdll.tms_get_enable_disk_backup() == enable_disk_backup
             assert cdll.tms_get_current_tag().decode("utf-8") == tag
             self._binary_wrapper.set_config(
                 tag=orig_tag,
                 interesting_region=orig_interesting_region,
                 enable_cpu_backup=orig_enable_cpu_backup,
+                cpu_backup_backend=orig_cpu_backup_backend,
                 enable_disk_backup=orig_enable_disk_backup,
             )
 

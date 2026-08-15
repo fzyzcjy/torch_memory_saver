@@ -2,7 +2,12 @@ import os
 import sys
 from types import SimpleNamespace
 
+import pytest
+import torch
+
 from torch_memory_saver import utils
+from torch_memory_saver.entrypoint import TorchMemorySaver
+from torch_memory_saver import entrypoint as entrypoint_mod
 from torch_memory_saver.utils import change_env
 
 
@@ -54,3 +59,30 @@ def test_change_env_restores_previous_value(monkeypatch):
         assert os.environ[key] == "1"
 
     assert os.environ[key] == "old"
+
+
+def test_cpu_backup_backend_requires_enable():
+    tms = TorchMemorySaver()
+    with pytest.raises(ValueError, match="requires enable_cpu_backup"):
+        with tms.region(enable_cpu_backup=False, cpu_backup_backend="mmap"):
+            pass
+
+
+def test_cpu_backup_backend_rejected_on_xpu(monkeypatch):
+    tms = TorchMemorySaver()
+    monkeypatch.setattr(entrypoint_mod, "is_xpu", lambda: True)
+    with pytest.raises(ValueError, match="not supported on XPU"):
+        with tms.region(enable_cpu_backup=True, cpu_backup_backend="pinned"):
+            pass
+    with pytest.raises(ValueError, match="not supported on XPU"):
+        with tms.region(enable_cpu_backup=True, cpu_backup_backend="mmap"):
+            pass
+
+
+def test_cpu_backup_backend_rejects_mmap_on_rocm(monkeypatch):
+    tms = TorchMemorySaver()
+    monkeypatch.setattr(entrypoint_mod, "is_xpu", lambda: False)
+    monkeypatch.setattr(torch.version, "hip", "6.2.0")
+    with pytest.raises(ValueError, match="not supported on ROCm"):
+        with tms.region(enable_cpu_backup=True, cpu_backup_backend="mmap"):
+            pass

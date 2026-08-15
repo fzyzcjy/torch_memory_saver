@@ -160,7 +160,7 @@ cudaError_t xpu_malloc(
       metadata.tag = tag;
       metadata.state = AllocationState::ACTIVE;
       metadata.enable_cpu_backup = enable_cpu_backup;
-      metadata.cpu_backup = nullptr;
+      metadata.cpu_backup = CpuBackupSlot{};
       metadata.enable_disk_backup = false;
       metadata.aligned_size = aligned;
       metadata.xpu.ze_ctx = pdc.ze_ctx;
@@ -236,8 +236,10 @@ cudaError_t xpu_free(
     }
 
     // Fully released: only now drop ownership.
-    if (metadata.cpu_backup)
-      std::free(metadata.cpu_backup);
+    if (metadata.cpu_backup.data) {
+      std::free(metadata.cpu_backup.data);
+      metadata.cpu_backup.data = nullptr;
+    }
     XPU_LOG("free ptr=" << ptr << " size=" << metadata.raw_size);
     allocation_metadata.erase(it);
     return cudaSuccess;
@@ -264,26 +266,28 @@ cudaError_t xpu_pause(
       size_t aligned = metadata.aligned_size;
 
       if (metadata.enable_cpu_backup) {
-        if (!metadata.cpu_backup)
-          metadata.cpu_backup = std::malloc(metadata.raw_size);
-        if (!metadata.cpu_backup) {
+        if (!metadata.cpu_backup.data)
+          metadata.cpu_backup.data = std::malloc(metadata.raw_size);
+        if (!metadata.cpu_backup.data) {
           XPU_ERR("cpu backup malloc failed for ptr=" << ptr
                   << " size=" << metadata.raw_size << "; keeping ACTIVE");
           if (first_err == cudaSuccess)
             first_err = cudaErrorMemoryAllocation;
           continue;
         }
+        metadata.cpu_backup.size = metadata.raw_size;
         bool memcpy_ok = false;
         try {
           PerDeviceContext &pdc = get_device_context(metadata.device);
-          pdc.sycl_queue.memcpy(metadata.cpu_backup, ptr, metadata.raw_size).wait();
+          pdc.sycl_queue.memcpy(metadata.cpu_backup.data, ptr, metadata.raw_size).wait();
           memcpy_ok = true;
         } catch (...) {
           XPU_ERR("cpu backup memcpy failed for ptr=" << ptr << "; keeping ACTIVE");
         }
         if (!memcpy_ok) {
-          std::free(metadata.cpu_backup);
-          metadata.cpu_backup = nullptr;
+          std::free(metadata.cpu_backup.data);
+          metadata.cpu_backup.data = nullptr;
+          metadata.cpu_backup.size = 0;
           if (first_err == cudaSuccess)
             first_err = cudaErrorMemoryAllocation;
           continue;
@@ -385,13 +389,13 @@ cudaError_t xpu_resume(
         continue;
       }
 
-      if (metadata.enable_cpu_backup && metadata.cpu_backup) {
+      if (metadata.enable_cpu_backup && metadata.cpu_backup.data) {
         bool restore_ok = false;
         try {
           if (xpu_test_fault("TMS_XPU_FAULT_RESUME_RESTORE"))
             throw std::runtime_error("injected restore fault");
           PerDeviceContext &pdc = get_device_context(metadata.device);
-          pdc.sycl_queue.memcpy(ptr, metadata.cpu_backup, metadata.raw_size).wait();
+          pdc.sycl_queue.memcpy(ptr, metadata.cpu_backup.data, metadata.raw_size).wait();
           restore_ok = true;
         } catch (const std::exception &e) {
           XPU_ERR("cpu restore memcpy failed for ptr=" << ptr << ": "
@@ -412,9 +416,10 @@ cudaError_t xpu_resume(
       metadata.xpu.ze_phys = phys;
       metadata.xpu.leaked = false;
       metadata.state = AllocationState::ACTIVE;
-      if (metadata.cpu_backup) {
-        std::free(metadata.cpu_backup);
-        metadata.cpu_backup = nullptr;
+      if (metadata.cpu_backup.data) {
+        std::free(metadata.cpu_backup.data);
+        metadata.cpu_backup.data = nullptr;
+        metadata.cpu_backup.size = 0;
       }
       XPU_LOG("resume ptr=" << ptr << " size=" << metadata.raw_size
                             << " tag=" << metadata.tag);
