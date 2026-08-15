@@ -66,10 +66,9 @@ static thread_local ThreadLocalConfig thread_local_config;
 #ifdef TMS_HOOK_MODE_PRELOAD
 cudaError_t cudaMalloc(void **ptr, size_t size) {
     if (thread_local_config.is_interesting_region()) {
-        const bool enable_cpu_backup = thread_local_config.enable_cpu_backup();
         return TorchMemorySaver::instance().malloc(
             ptr, CUDAUtils::cu_ctx_get_device(), size, thread_local_config.current_tag_,
-            enable_cpu_backup, thread_local_config.cpu_backup_kind(),
+            thread_local_config.enable_cpu_backup(), thread_local_config.cpu_backup_kind(),
             thread_local_config.enable_disk_backup());
     } else {
         return APIForwarder::call_real_cuda_malloc(ptr, size);
@@ -91,10 +90,9 @@ void *tms_torch_malloc(ssize_t size, int device, cudaStream_t stream) {
 #endif
     SIMPLE_CHECK(thread_local_config.is_interesting_region(), "only support interesting region");
     void *ptr;
-    const bool enable_cpu_backup = thread_local_config.enable_cpu_backup();
     CUDA_ERROR_CHECK(TorchMemorySaver::instance().malloc(
         &ptr, CUDAUtils::cu_device_get(device), size, thread_local_config.current_tag_,
-        enable_cpu_backup, thread_local_config.cpu_backup_kind(),
+        thread_local_config.enable_cpu_backup(), thread_local_config.cpu_backup_kind(),
         thread_local_config.enable_disk_backup()));
     return ptr;
 }
