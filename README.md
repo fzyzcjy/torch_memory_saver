@@ -68,7 +68,7 @@ torch_memory_saver.resume()
 assert tensor1[0] == 42, "content is kept unchanged"
 ```
 
-The default host shadow is pinned (`cpu_backup_backend="pinned"`). On CUDA, use `cpu_backup_backend="mmap"` (or `TMS_INIT_CPU_BACKUP_BACKEND=mmap`) when you need process RSS to reclaim after a non-retaining resume; both backends release the host shadow on resume unless retention is enabled (`munmap` / `cudaFreeHost`).
+The default host shadow is pinned (`cpu_backup_backend="pinned"`). If process RSS remains resident after a non-retaining resume with the pinned backend, CUDA users can select `cpu_backup_backend="mmap"` (or `TMS_INIT_CPU_BACKUP_BACKEND=mmap`) so releasing the host shadow uses `munmap` instead of `cudaFreeHost`. Both backends release the host shadow on resume unless retention is enabled.
 
 ```python
 with torch_memory_saver.region(enable_cpu_backup=True, cpu_backup_backend="mmap"):
