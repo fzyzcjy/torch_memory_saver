@@ -95,8 +95,7 @@ cudaError_t TorchMemorySaver::malloc(
 
 cudaError_t TorchMemorySaver::free(void *ptr) {
 #if TMS_ROCM_LEGACY_CHUNKED
-    return ROCmHIPImplementation::rocm_free(
-        ptr, allocation_metadata_, allocator_metadata_mutex_);
+    return ROCmHIPImplementation::rocm_free(ptr, allocation_metadata_, allocator_metadata_mutex_);
 
 #elif defined(USE_XPU)
     return XPUImplementation::xpu_free(ptr, allocation_metadata_, allocator_metadata_mutex_);
