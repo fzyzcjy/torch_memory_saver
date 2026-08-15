@@ -13,8 +13,8 @@
 #endif
 
 enum class CpuBackupKind : uint8_t {
-    MMAP = 0,
-    PINNED = 1,
+    PINNED = 0,
+    MMAP = 1,
 };
 
 constexpr CpuBackupKind kDefaultCpuBackupKind = CpuBackupKind::PINNED;
