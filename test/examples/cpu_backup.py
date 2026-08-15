@@ -171,9 +171,13 @@ def run_backend_from_env(hook_mode: str):
     logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
     assert os.environ.get("TMS_INIT_CPU_BACKUP_BACKEND") == "mmap"
     device = get_device()
+    torch_memory_saver._ensure_initialized()
+    cdll = torch_memory_saver._impl._binary_wrapper.cdll
+    assert cdll.tms_get_cpu_backup_backend() == b"mmap"
 
     with torch_memory_saver.region(enable_cpu_backup=True):
         tensor = torch.full((20_000_000,), 10, dtype=torch.uint8, device=device)
+    assert cdll.tms_get_cpu_backup_backend() == b"mmap"
 
     torch_memory_saver.pause()
     assert torch_memory_saver.get_cpu_backup(tensor) is not None
