@@ -198,8 +198,7 @@ class _TorchMemorySaverImpl:
         if enable_cpu_backup:
             resolved_cpu_backup_backend = (
                 cpu_backup_backend
-                if cpu_backup_backend is not None
-                else self._binary_wrapper.cdll.tms_get_cpu_backup_backend().decode("utf-8")
+                or self._binary_wrapper.cdll.tms_get_cpu_backup_backend().decode("utf-8")
             )
         key = (
             tag,
