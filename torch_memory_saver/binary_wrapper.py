@@ -27,7 +27,8 @@ class BinaryWrapper:
         self.cdll.tms_set_current_tag(tag.encode("utf-8"))
         self.cdll.tms_set_interesting_region(interesting_region)
         self.cdll.tms_set_enable_cpu_backup(enable_cpu_backup)
-        self.cdll.tms_set_cpu_backup_backend((cpu_backup_backend or "").encode("utf-8"))
+        if cpu_backup_backend is not None:
+            self.cdll.tms_set_cpu_backup_backend(cpu_backup_backend.encode("utf-8"))
         self.cdll.tms_set_enable_disk_backup(enable_disk_backup)
 
 

@@ -271,6 +271,7 @@ class _TorchMemorySaverImpl:
         orig_enable_cpu_backup = cdll.tms_get_enable_cpu_backup()
         orig_cpu_backup_backend = cdll.tms_get_cpu_backup_backend().decode("utf-8")
         orig_enable_disk_backup = cdll.tms_get_enable_disk_backup()
+        expected_cpu_backup_backend = cpu_backup_backend or orig_cpu_backup_backend
 
         self._binary_wrapper.set_config(
             tag=tag,
@@ -284,8 +285,9 @@ class _TorchMemorySaverImpl:
         finally:
             assert cdll.tms_get_interesting_region()
             assert cdll.tms_get_enable_cpu_backup() == enable_cpu_backup
-            assert cdll.tms_get_cpu_backup_backend().decode("utf-8") == (
-                cpu_backup_backend or ""
+            assert (
+                cdll.tms_get_cpu_backup_backend().decode("utf-8")
+                == expected_cpu_backup_backend
             )
             assert cdll.tms_get_enable_disk_backup() == enable_disk_backup
             assert cdll.tms_get_current_tag().decode("utf-8") == tag

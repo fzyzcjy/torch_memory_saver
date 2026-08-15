@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <optional>
 #include <string>
 
 #if !defined(USE_XPU)
@@ -108,9 +107,9 @@ inline void cpu_backup_onload(void* gpu_ptr, size_t size, const CpuBackupSlot& s
 
 #endif
 
-inline std::optional<CpuBackupKind> cpu_backup_kind_from_str(const char* value) {
+inline CpuBackupKind cpu_backup_kind_from_str(const char* value) {
     if (value == nullptr || value[0] == '\0') {
-        return std::nullopt;
+        return kDefaultCpuBackupKind;
     }
     std::string s(value);
     if (s == "mmap") {
@@ -124,7 +123,7 @@ inline std::optional<CpuBackupKind> cpu_backup_kind_from_str(const char* value) 
         return CpuBackupKind::PINNED;
     }
     SIMPLE_CHECK(false, "cpu_backup_backend must be mmap or pinned value=" << s);
-    return std::nullopt;
+    return kDefaultCpuBackupKind;
 }
 
 inline const char* cpu_backup_kind_to_str(CpuBackupKind kind) {
