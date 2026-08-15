@@ -2,13 +2,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 struct DiskBackupSlot {
     std::string path;
 };
 
 // Spills paused GPU allocations to per-allocation files, streaming through one
-// shared pinned staging buffer. dir_ must be a real disk mount, not tmpfs.
+// shared staging buffer. dir_ must be a real disk mount, not tmpfs.
 class DiskBackend {
 public:
     DiskBackend(std::string dir, size_t chunk_bytes);
@@ -27,7 +28,7 @@ private:
 
     std::string dir_;
     size_t chunk_bytes_;
-    void* staging_buf_ = nullptr;
+    std::vector<uint8_t> staging_buf_;
     bool checked_fs_ = false;
 };
 

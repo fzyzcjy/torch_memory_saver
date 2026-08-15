@@ -86,9 +86,8 @@ DiskBackend::DiskBackend(std::string dir, size_t chunk_bytes)
     : dir_(std::move(dir)), chunk_bytes_(chunk_bytes) {}
 
 void DiskBackend::ensure_staging_buf_() {
-    if (staging_buf_ == nullptr) {
-        CUDA_ERROR_CHECK(cudaMallocHost(&staging_buf_, chunk_bytes_));
-        SIMPLE_CHECK(staging_buf_ != nullptr, "failed to allocate pinned disk staging buffer");
+    if (staging_buf_.empty()) {
+        staging_buf_.resize(chunk_bytes_);
     }
 }
 
@@ -139,7 +138,7 @@ int DiskBackend::open_slot_file_(const DiskBackupSlot& slot) {
 void DiskBackend::offload(void* gpu_ptr, size_t size, DiskBackupSlot& slot) {
     ensure_staging_buf_();
     int fd = slot.path.empty() ? create_slot_file_(slot, size) : open_slot_file_(slot);
-    stream_chunked(fd, gpu_ptr, size, staging_buf_, chunk_bytes_, /*to_disk=*/true);
+    stream_chunked(fd, gpu_ptr, size, staging_buf_.data(), chunk_bytes_, /*to_disk=*/true);
     drop_page_cache(fd, size);
     close(fd);
 }
@@ -148,7 +147,8 @@ void DiskBackend::onload(void* gpu_ptr, size_t size, DiskBackupSlot& slot) {
     ensure_staging_buf_();
     SIMPLE_CHECK(!slot.path.empty(), "disk backup missing on resume (was it ever paused?)");
     int fd = open_slot_file_(slot);
-    stream_chunked(fd, gpu_ptr, size, staging_buf_, chunk_bytes_, /*to_disk=*/false);
+    stream_chunked(fd, gpu_ptr, size, staging_buf_.data(), chunk_bytes_, /*to_disk=*/false);
+    CUDA_ERROR_CHECK(cudaDeviceSynchronize());
     drop_page_cache(fd, size);
     close(fd);
 }
