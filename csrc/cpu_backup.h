@@ -31,6 +31,10 @@ namespace cpu_backuper {
 
 // XPU owns host shadows with malloc/free in hardware_xpu_support.cpp and must
 // not call these CUDA/HIP helpers (kind is unused on that path).
+inline void allocate(size_t, CpuBackupSlot&) {
+    SIMPLE_CHECK(false, "cpu_backuper::allocate is not supported on XPU");
+}
+
 inline void release(CpuBackupSlot&) {
     SIMPLE_CHECK(false, "cpu_backuper::release is not supported on XPU");
 }
@@ -44,6 +48,29 @@ inline void onload(void*, size_t, const CpuBackupSlot&) {
 }
 
 #else
+
+inline void allocate(size_t size, CpuBackupSlot& slot) {
+    switch (slot.kind) {
+        case CpuBackupKind::MMAP: {
+            void* p = mmap(nullptr, size, PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            if (p == MAP_FAILED) {
+                const int err = errno;
+                SIMPLE_CHECK(false,
+                             "mmap cpu_backup failed errno=" << err << " " << strerror(err));
+            }
+            slot.data = p;
+            break;
+        }
+        case CpuBackupKind::PINNED:
+            CUDA_ERROR_CHECK(cudaMallocHost(&slot.data, size));
+            SIMPLE_CHECK(slot.data != nullptr, "cudaMallocHost cpu_backup returned nullptr");
+            break;
+        default:
+            SIMPLE_CHECK(false, "unknown cpu_backup_kind=" << static_cast<int>(slot.kind));
+    }
+    slot.size = size;
+}
 
 inline void release(CpuBackupSlot& slot) {
     if (slot.data == nullptr) {
@@ -70,26 +97,7 @@ inline void release(CpuBackupSlot& slot) {
 
 inline void offload(void* gpu_ptr, size_t size, CpuBackupSlot& slot) {
     if (slot.data == nullptr) {
-        switch (slot.kind) {
-            case CpuBackupKind::MMAP: {
-                void* p = mmap(nullptr, size, PROT_READ | PROT_WRITE,
-                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-                if (p == MAP_FAILED) {
-                    const int err = errno;
-                    SIMPLE_CHECK(false,
-                                 "mmap cpu_backup failed errno=" << err << " " << strerror(err));
-                }
-                slot.data = p;
-                break;
-            }
-            case CpuBackupKind::PINNED:
-                CUDA_ERROR_CHECK(cudaMallocHost(&slot.data, size));
-                SIMPLE_CHECK(slot.data != nullptr, "cudaMallocHost cpu_backup returned nullptr");
-                break;
-            default:
-                SIMPLE_CHECK(false, "unknown cpu_backup_kind=" << static_cast<int>(slot.kind));
-        }
-        slot.size = size;
+        allocate(size, slot);
     }
     SIMPLE_CHECK(slot.data != nullptr && slot.size == size, "cpu_backup slot size mismatch");
     // TODO may use cudaMemcpyAsync if needed
