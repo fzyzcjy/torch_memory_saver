@@ -38,10 +38,12 @@ def run(hook_mode: str):
     assert cdll.tms_get_interesting_region()
     assert cdll.tms_get_enable_cpu_backup()
     assert cdll.tms_get_current_tag() == b"default"
+    assert cdll.tms_get_cpu_backup_backend() == b"pinned"
     print("✓ Initial state: interesting_region=True, cpu_backup=True, tag=default")
 
     # --- Allocate model weights (default tag, cpu_backup=True) ---
     model_weight = torch.full((SIZE,), 42.0, dtype=torch.float32, device="cuda")
+    assert cdll.tms_get_cpu_backup_backend() == b"pinned"
 
     # --- Allocate grad buffer inside nested region (cpu_backup=False) ---
     with torch_memory_saver.region(tag="grad_buffer", enable_cpu_backup=False):
@@ -49,6 +51,7 @@ def run(hook_mode: str):
         assert cdll.tms_get_interesting_region()
         assert not cdll.tms_get_enable_cpu_backup()
         assert cdll.tms_get_current_tag() == b"grad_buffer"
+        assert cdll.tms_get_cpu_backup_backend() == b"pinned"
         print("✓ Inside region: interesting_region=True, cpu_backup=False, tag=grad_buffer")
 
         grad_buffer = torch.full((SIZE,), 99.0, dtype=torch.float32, device="cuda")
@@ -57,7 +60,14 @@ def run(hook_mode: str):
     assert cdll.tms_get_interesting_region()
     assert cdll.tms_get_enable_cpu_backup()
     assert cdll.tms_get_current_tag() == b"default"
+    assert cdll.tms_get_cpu_backup_backend() == b"pinned"
     print("✓ After region: interesting_region=True, cpu_backup=True, tag=default (restored)")
+
+    if not torch.version.hip:
+        with torch_memory_saver.region(enable_cpu_backup=True, cpu_backup_backend="mmap"):
+            assert cdll.tms_get_cpu_backup_backend() == b"mmap"
+            _ = torch.full((1024,), 1, dtype=torch.uint8, device="cuda")
+        assert cdll.tms_get_cpu_backup_backend() == b"pinned"
 
     mem_before_pause = get_and_print_gpu_memory("Before pause")
 

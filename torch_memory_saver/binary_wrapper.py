@@ -1,5 +1,6 @@
 import ctypes
 import logging
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -14,10 +15,20 @@ class BinaryWrapper:
 
         _setup_function_signatures(self.cdll)
 
-    def set_config(self, *, tag: str, interesting_region: bool, enable_cpu_backup: bool, enable_disk_backup: bool = False):
+    def set_config(
+        self,
+        *,
+        tag: str,
+        interesting_region: bool,
+        enable_cpu_backup: bool,
+        cpu_backup_backend: Optional[str] = None,
+        enable_disk_backup: bool = False,
+    ):
         self.cdll.tms_set_current_tag(tag.encode("utf-8"))
         self.cdll.tms_set_interesting_region(interesting_region)
         self.cdll.tms_set_enable_cpu_backup(enable_cpu_backup)
+        if cpu_backup_backend is not None:
+            self.cdll.tms_set_cpu_backup_backend(cpu_backup_backend.encode("utf-8"))
         self.cdll.tms_set_enable_disk_backup(enable_disk_backup)
 
 
@@ -29,6 +40,8 @@ def _setup_function_signatures(cdll):
     cdll.tms_get_interesting_region.restype = ctypes.c_bool
     cdll.tms_set_enable_cpu_backup.argtypes = [ctypes.c_bool]
     cdll.tms_get_enable_cpu_backup.restype = ctypes.c_bool
+    cdll.tms_set_cpu_backup_backend.argtypes = [ctypes.c_char_p]
+    cdll.tms_get_cpu_backup_backend.restype = ctypes.c_char_p
     cdll.tms_set_enable_disk_backup.argtypes = [ctypes.c_bool]
     cdll.tms_get_enable_disk_backup.restype = ctypes.c_bool
     cdll.tms_set_disk_backup_dir.argtypes = [ctypes.c_char_p]

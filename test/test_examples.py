@@ -2,6 +2,7 @@ import pytest
 from contextlib import nullcontext
 
 import multiprocessing
+import sys
 import traceback
 import torch
 import torch_memory_saver
@@ -53,6 +54,52 @@ def test_cpu_backup(hook_mode):
 
 
 @_skip_on_xpu
+@_multi_device_only
+@pytest.mark.skipif(torch.version.hip is not None, reason="mmap CPU backup is CUDA-only")
+@pytest.mark.parametrize("hook_mode", _HOOK_MODES)
+def test_cpu_backup_multi_device_mmap_restore(hook_mode):
+    """Restore mmap backups on each allocation's CUDA device."""
+    _test_core(cpu_backup.run_multi_device_mmap_restore, hook_mode=hook_mode)
+
+
+@_skip_on_xpu
+@pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or torch.version.hip is not None
+    or sys.platform != "linux",
+    reason="mmap RSS reclaim is CUDA-only; needs Linux /proc",
+)
+def test_cpu_backup_rss():
+    _test_core(cpu_backup.run_rss, hook_mode="torch")
+
+
+@_skip_on_xpu
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or torch.version.hip is not None,
+    reason="TMS_INIT_CPU_BACKUP_BACKEND=mmap is CUDA-only",
+)
+@pytest.mark.parametrize("hook_mode", _HOOK_MODES)
+def test_cpu_backup_backend_from_env(hook_mode):
+    with change_env("TMS_INIT_CPU_BACKUP_BACKEND", "mmap"):
+        _test_core(cpu_backup.run_backend_from_env, hook_mode=hook_mode)
+
+
+@_skip_on_xpu
+@pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or torch.version.hip is not None
+    or sys.platform != "linux",
+    reason="preload mmap env path is CUDA-only; needs Linux /proc",
+)
+def test_cpu_backup_preload_backend_from_env():
+    with (
+        change_env("TMS_INIT_ENABLE", "1"),
+        change_env("TMS_INIT_ENABLE_CPU_BACKUP", "1"),
+        change_env("TMS_INIT_CPU_BACKUP_BACKEND", "mmap"),
+    ):
+        _test_core(cpu_backup.run_preload_backend_from_env, hook_mode="preload")
+
+
 @pytest.mark.parametrize("hook_mode", _HOOK_MODES)
 def test_disk_backup(hook_mode):
     _test_core(disk_backup.run, hook_mode=hook_mode)
