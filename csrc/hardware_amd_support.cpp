@@ -319,8 +319,7 @@ namespace ROCmHIPImplementation {
             // Create new handles and map chunks
             cu_mem_create_and_map(metadata.device, metadata.aligned_size, (hipDeviceptr_t)ptr, metadata.allocHandles, metadata.chunk_sizes);
 
-            // Restore from CPU backup if enabled. Keep the pinned host buffer
-            // across resume (legacy ROCm behavior); free happens in rocm_free.
+            // Restore from CPU backup if enabled
             if (metadata.enable_cpu_backup) {
                 cpu_backuper::onload(
                     ptr, metadata.aligned_size, metadata.device, metadata.cpu_backup);
