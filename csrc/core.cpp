@@ -120,7 +120,7 @@ cudaError_t TorchMemorySaver::free(void *ptr) {
     }
     CURESULT_CHECK(cuMemAddressFree((CUdeviceptr) ptr, metadata.allocation_size));
 
-    cpu_backup_release(metadata.cpu_backup);
+    cpu_backuper::release(metadata.cpu_backup);
 
     if (metadata.enable_disk_backup) {
         disk_backend_.release(metadata.disk);
@@ -188,7 +188,7 @@ cudaError_t TorchMemorySaver::pause(const std::string& tag) {
         }
 
         if (metadata.enable_cpu_backup) {
-            cpu_backup_offload(ptr, metadata.raw_size, metadata.cpu_backup);
+            cpu_backuper::offload(ptr, metadata.raw_size, metadata.cpu_backup);
         } else if (metadata.enable_disk_backup) {
             disk_backend_.offload(ptr, metadata.raw_size, metadata.disk);
         }
@@ -249,9 +249,9 @@ cudaError_t TorchMemorySaver::resume(const std::string& tag) {
         CUDAUtils::cu_mem_set_access(ptr, metadata.allocation_size, metadata.device);
 
         if (metadata.enable_cpu_backup) {
-            cpu_backup_onload(ptr, metadata.raw_size, metadata.cpu_backup);
+            cpu_backuper::onload(ptr, metadata.raw_size, metadata.cpu_backup);
             if (!retain_cpu_backup) {
-                cpu_backup_release(metadata.cpu_backup);
+                cpu_backuper::release(metadata.cpu_backup);
             }
         } else if (metadata.enable_disk_backup) {
             disk_backend_.onload(ptr, metadata.raw_size, metadata.disk);

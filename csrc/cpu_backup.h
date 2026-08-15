@@ -25,25 +25,27 @@ struct CpuBackupSlot {
     size_t size = 0;
 };
 
+namespace cpu_backuper {
+
 #if defined(USE_XPU)
 
 // XPU owns host shadows with malloc/free in hardware_xpu_support.cpp and must
 // not call these CUDA/HIP helpers (kind is unused on that path).
-inline void cpu_backup_release(CpuBackupSlot&) {
-    SIMPLE_CHECK(false, "cpu_backup_release is not supported on XPU");
+inline void release(CpuBackupSlot&) {
+    SIMPLE_CHECK(false, "cpu_backuper::release is not supported on XPU");
 }
 
-inline void cpu_backup_offload(void*, size_t, CpuBackupSlot&) {
-    SIMPLE_CHECK(false, "cpu_backup_offload is not supported on XPU");
+inline void offload(void*, size_t, CpuBackupSlot&) {
+    SIMPLE_CHECK(false, "cpu_backuper::offload is not supported on XPU");
 }
 
-inline void cpu_backup_onload(void*, size_t, const CpuBackupSlot&) {
-    SIMPLE_CHECK(false, "cpu_backup_onload is not supported on XPU");
+inline void onload(void*, size_t, const CpuBackupSlot&) {
+    SIMPLE_CHECK(false, "cpu_backuper::onload is not supported on XPU");
 }
 
 #else
 
-inline void cpu_backup_release(CpuBackupSlot& slot) {
+inline void release(CpuBackupSlot& slot) {
     if (slot.data == nullptr) {
         return;
     }
@@ -66,7 +68,7 @@ inline void cpu_backup_release(CpuBackupSlot& slot) {
     slot.size = 0;
 }
 
-inline void cpu_backup_offload(void* gpu_ptr, size_t size, CpuBackupSlot& slot) {
+inline void offload(void* gpu_ptr, size_t size, CpuBackupSlot& slot) {
     if (slot.data == nullptr) {
         switch (slot.kind) {
             case CpuBackupKind::MMAP: {
@@ -94,7 +96,7 @@ inline void cpu_backup_offload(void* gpu_ptr, size_t size, CpuBackupSlot& slot) 
     CUDA_ERROR_CHECK(cudaMemcpy(slot.data, gpu_ptr, size, cudaMemcpyDeviceToHost));
 }
 
-inline void cpu_backup_onload(void* gpu_ptr, size_t size, const CpuBackupSlot& slot) {
+inline void onload(void* gpu_ptr, size_t size, const CpuBackupSlot& slot) {
     SIMPLE_CHECK(slot.data != nullptr, "cpu_backup missing on resume");
     SIMPLE_CHECK(slot.size == size, "cpu_backup slot size mismatch");
     // TODO may use cudaMemcpyAsync if needed
@@ -106,6 +108,8 @@ inline void cpu_backup_onload(void* gpu_ptr, size_t size, const CpuBackupSlot& s
 }
 
 #endif
+
+}
 
 inline CpuBackupKind cpu_backup_kind_from_str(const char* value) {
     if (value == nullptr || value[0] == '\0') {

@@ -235,7 +235,7 @@ namespace ROCmHIPImplementation {
         // Free the reserved address using stored aligned_size
         CURESULT_CHECK(hipMemAddressFree((hipDeviceptr_t)ptr, metadata.aligned_size));
 
-        cpu_backup_release(metadata.cpu_backup);
+        cpu_backuper::release(metadata.cpu_backup);
 
 #ifdef TMS_DEBUG_LOG
         std::cout << "[torch_memory_saver.cpp] TorchMemorySaver.cuda_free "
@@ -273,7 +273,7 @@ namespace ROCmHIPImplementation {
 
             // Copy data to CPU backup if enabled
             if (metadata.enable_cpu_backup) {
-                cpu_backup_offload(ptr, metadata.aligned_size, metadata.cpu_backup);
+                cpu_backuper::offload(ptr, metadata.aligned_size, metadata.cpu_backup);
             }
 
             // Unmap and release chunks (but keep metadata for resume)
@@ -322,7 +322,7 @@ namespace ROCmHIPImplementation {
             // Restore from CPU backup if enabled. Keep the pinned host buffer
             // across resume (legacy ROCm behavior); free happens in rocm_free.
             if (metadata.enable_cpu_backup) {
-                cpu_backup_onload(ptr, metadata.aligned_size, metadata.cpu_backup);
+                cpu_backuper::onload(ptr, metadata.aligned_size, metadata.cpu_backup);
             }
 
             metadata.state = AllocationState::ACTIVE;
