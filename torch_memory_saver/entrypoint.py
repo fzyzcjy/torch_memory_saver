@@ -41,9 +41,7 @@ class TorchMemorySaver:
 
         cpu_backup_backend selects the host shadow when enable_cpu_backup is True:
         "pinned" (default; cudaMallocHost/hipHostMalloc) or "mmap" (reclaimable
-        RSS on CUDA). ROCm/XPU are pinned-only. On CUDA, host shadows are
-        released on resume unless retain_cpu_backup is enabled; get_cpu_backup
-        is valid while paused, and after resume when retention is on.
+        RSS on CUDA). ROCm/XPU are pinned-only.
         """
         self._ensure_initialized()
         assert not (enable_cpu_backup and enable_disk_backup), \
