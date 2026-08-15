@@ -79,15 +79,22 @@ ROCm/XPU stay pinned-only (`cpu_backup_backend="mmap"` is rejected); on the lega
 
 `TMS_INIT_CPU_BACKUP_BACKEND=mmap|pinned` sets the process default for preload / env-driven integrations; an explicit `cpu_backup_backend=` argument overrides it.
 
-On CUDA, pinned or mmap CPU backups can be retained across resume cycles to avoid reallocating them before every pause:
+On CUDA, pinned or mmap CPU backups can be retained across resume cycles to avoid
+reallocating them before every pause:
 
 ```python
 torch_memory_saver.retain_cpu_backup = True
 ```
 
-Set `TMS_RETAIN_CPU_BACKUP=1` before process startup to enable the same policy, including for preload mode. Retention is CUDA-only and can consume host RAM equal to the backed-up allocations. While enabled, `get_cpu_backup` continues to expose the retained backup after resume. Without retention on CUDA, `get_cpu_backup` is only valid while allocations are paused.
+Set `TMS_RETAIN_CPU_BACKUP=1` before process startup to enable the same policy,
+including for preload mode. Retention is CUDA-only and can consume host RAM
+equal to the backed-up allocations. While enabled, `get_cpu_backup` continues
+to expose the retained backup after resume. Without retention on CUDA,
+`get_cpu_backup` is only valid while allocations are paused.
 
-The retention policy is consulted on resume. Setting it to `False` does not eagerly free backups for active allocations; they are released by a later non-retaining resume, when the allocation is freed, or when the process exits.
+The retention policy is consulted on resume. Setting it to `False` does not eagerly free
+backups for active allocations; they are released by a later non-retaining
+resume, when the allocation is freed, or when the process exits.
 
 ### Hook Modes
 
