@@ -50,7 +50,7 @@ class TorchMemorySaver:
             tag=tag,
             enable_cpu_backup=enable_cpu_backup,
             enable_disk_backup=enable_disk_backup,
-            cpu_backup_backend=self._cpu_backup_backend(enable_cpu_backup, cpu_backup_backend),
+            cpu_backup_backend=cpu_backup_backend,
         ):
             yield
 
@@ -67,7 +67,7 @@ class TorchMemorySaver:
                 cuda_graph=cuda_graph,
                 pool=pool, stream=stream, capture_error_mode=capture_error_mode,
                 tag=tag, enable_cpu_backup=enable_cpu_backup,
-                cpu_backup_backend=self._cpu_backup_backend(enable_cpu_backup, cpu_backup_backend),
+                cpu_backup_backend=cpu_backup_backend,
         ):
             yield
 
@@ -138,28 +138,6 @@ class TorchMemorySaver:
         os.makedirs(path, exist_ok=True)
         self._impl._binary_wrapper.cdll.tms_set_disk_backup_dir(path.encode("utf-8"))
 
-    def _cpu_backup_backend(
-        self,
-        enable_cpu_backup: bool,
-        cpu_backup_backend: Optional[CpuBackupBackend],
-    ) -> Optional[CpuBackupBackend]:
-        if not enable_cpu_backup:
-            if cpu_backup_backend is not None:
-                raise ValueError("cpu_backup_backend requires enable_cpu_backup=True")
-            return None
-        if cpu_backup_backend is None:
-            env = os.environ.get("TMS_INIT_CPU_BACKUP_BACKEND")
-            cpu_backup_backend = env if env else "pinned"  # type: ignore[assignment]
-        if cpu_backup_backend not in ("mmap", "pinned"):
-            raise ValueError(
-                f'cpu_backup_backend must be "mmap" or "pinned", got {cpu_backup_backend!r}'
-            )
-        if cpu_backup_backend == "mmap" and (torch.version.hip or is_xpu()):
-            raise ValueError(
-                "cpu_backup_backend='mmap' is not supported on ROCm/XPU"
-            )
-        return cpu_backup_backend  # type: ignore[return-value]
-
     def _ensure_initialized(self):
         if self._impl is not None:
             return
@@ -216,11 +194,18 @@ class _TorchMemorySaverImpl:
         # multi-device process must not reuse one device's pool on another.
         # Include backend so torch-mode pool reuse cannot stick the first kind.
         device = self._current_device()
+        resolved_cpu_backup_backend = ""
+        if enable_cpu_backup:
+            resolved_cpu_backup_backend = (
+                cpu_backup_backend
+                if cpu_backup_backend is not None
+                else self._binary_wrapper.cdll.tms_get_cpu_backup_backend().decode("utf-8")
+            )
         key = (
             tag,
             enable_cpu_backup,
             enable_disk_backup,
-            cpu_backup_backend or "",
+            resolved_cpu_backup_backend,
             device,
         )
         mem_pool = self._mem_pools[key]

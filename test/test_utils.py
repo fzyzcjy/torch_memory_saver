@@ -2,12 +2,7 @@ import os
 import sys
 from types import SimpleNamespace
 
-import pytest
-import torch
-
 from torch_memory_saver import utils
-from torch_memory_saver.entrypoint import TorchMemorySaver
-from torch_memory_saver import entrypoint as entrypoint_mod
 from torch_memory_saver.utils import change_env
 
 
@@ -59,44 +54,3 @@ def test_change_env_restores_previous_value(monkeypatch):
         assert os.environ[key] == "1"
 
     assert os.environ[key] == "old"
-
-
-def test_cpu_backup_backend_rejects_without_enable():
-    tms = TorchMemorySaver()
-    with pytest.raises(ValueError, match="requires enable_cpu_backup"):
-        tms._cpu_backup_backend(False, "mmap")
-    assert tms._cpu_backup_backend(False, None) is None
-
-
-def test_cpu_backup_backend_rejects_unknown():
-    tms = TorchMemorySaver()
-    with pytest.raises(ValueError, match="must be \"mmap\" or \"pinned\""):
-        tms._cpu_backup_backend(True, "disk")  # type: ignore[arg-type]
-
-
-def test_cpu_backup_backend_defaults_and_env(monkeypatch):
-    tms = TorchMemorySaver()
-    monkeypatch.delenv("TMS_INIT_CPU_BACKUP_BACKEND", raising=False)
-    monkeypatch.setattr(torch.version, "hip", None)
-    monkeypatch.setattr(entrypoint_mod, "is_xpu", lambda: False)
-
-    assert tms._cpu_backup_backend(True, None) == "pinned"
-
-    monkeypatch.setenv("TMS_INIT_CPU_BACKUP_BACKEND", "")
-    assert tms._cpu_backup_backend(True, None) == "pinned"
-
-    monkeypatch.setenv("TMS_INIT_CPU_BACKUP_BACKEND", "mmap")
-    assert tms._cpu_backup_backend(True, None) == "mmap"
-    assert tms._cpu_backup_backend(True, "pinned") == "pinned"
-
-
-@pytest.mark.parametrize("platform", ["rocm", "xpu"])
-def test_cpu_backup_backend_rejects_mmap_on_rocm_xpu(monkeypatch, platform):
-    tms = TorchMemorySaver()
-    monkeypatch.delenv("TMS_INIT_CPU_BACKUP_BACKEND", raising=False)
-    monkeypatch.setattr(torch.version, "hip", "6.2.0" if platform == "rocm" else None)
-    monkeypatch.setattr(entrypoint_mod, "is_xpu", lambda: platform == "xpu")
-
-    assert tms._cpu_backup_backend(True, None) == "pinned"
-    with pytest.raises(ValueError, match="not supported on ROCm/XPU"):
-        tms._cpu_backup_backend(True, "mmap")
