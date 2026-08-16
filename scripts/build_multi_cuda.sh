@@ -34,9 +34,27 @@ fi
 CU12_WHEEL="${cu12_matches[0]}"
 CU13_WHEEL="${cu13_matches[0]}"
 
-python3 scripts/merge_cuda_wheels.py "${CU12_WHEEL}" "${CU13_WHEEL}" --out-dir dist
-
-# Remove the per-CUDA intermediates so dist/ contains only the merged wheel.
-rm -f "${CU12_WHEEL}" "${CU13_WHEEL}"
+TMS_HOST_UID="$(id -u)"
+TMS_HOST_GID="$(id -g)"
+TMS_MERGE_PLATFORM="linux/$(uname -m)"
+TMS_MERGE_PLATFORM="${TMS_MERGE_PLATFORM/linux\/x86_64/linux\/amd64}"
+docker run --rm \
+    --platform "${TMS_MERGE_PLATFORM}" \
+    -e TMS_HOST_UID="${TMS_HOST_UID}" \
+    -e TMS_HOST_GID="${TMS_HOST_GID}" \
+    -e TMS_CU12_WHEEL="/app/${CU12_WHEEL}" \
+    -e TMS_CU13_WHEEL="/app/${CU13_WHEEL}" \
+    -v "$(pwd):/app" \
+    "${TMS_PYTHON_BUILD_IMAGE:-python:3.11}" \
+    bash -c '
+        set -euo pipefail
+        python /app/scripts/merge_cuda_wheels.py "$TMS_CU12_WHEEL" "$TMS_CU13_WHEEL" --out-dir /app/dist
+        rm -f "$TMS_CU12_WHEEL" "$TMS_CU13_WHEEL"
+        for path in /app/dist /app/build /app/torch_memory_saver.egg-info; do
+            if [[ -e "$path" ]]; then
+                chown -R "$TMS_HOST_UID:$TMS_HOST_GID" "$path"
+            fi
+        done
+    '
 
 ls -la dist/

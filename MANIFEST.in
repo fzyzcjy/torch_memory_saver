@@ -1,1 +1,2 @@
 include csrc/*.h
+include csrc/*.cpp
