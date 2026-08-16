@@ -6,7 +6,6 @@ readonly ARTIFACT_MANIFEST="${2:?Usage: verify_published_release.sh VERSION ARTI
 readonly REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 readonly PROXY_URL="${TMS_PROXY_URL:-http://127.0.0.1:7890}"
 readonly PYPI_JSON="$(mktemp)"
-readonly GITHUB_JSON="$(mktemp)"
 readonly EXPECTED_PYTEST_SKIPS='{
   "test/test_examples.py::test_cleanup_failure_injection_xpu": "XPU-specific path",
   "test/test_examples.py::test_cpu_backup_multi_device_mmap_restore[preload]": "Multi-device test requires at least two devices",
@@ -21,7 +20,7 @@ readonly EXPECTED_PYTEST_SKIPS='{
   "test/test_examples.py::test_resume_failure_injection_xpu": "XPU-specific path"
 }'
 
-trap 'status=$?; rm -f "$PYPI_JSON" "$GITHUB_JSON"; echo "RESULT: returncode=$status"; exit "$status"' EXIT
+trap 'status=$?; rm -f "$PYPI_JSON"; echo "RESULT: returncode=$status"; exit "$status"' EXIT
 
 test "$(uname -m)" = "x86_64"
 for executable in curl jq docker; do
@@ -37,16 +36,6 @@ test "$(jq '.urls | length' "$PYPI_JSON")" -eq 3
 while read -r expected_digest filename; do
   test "$(jq --raw-output --arg filename "$filename" '.urls[] | select(.filename == $filename) | .digests.sha256' "$PYPI_JSON")" = "$expected_digest"
 done < "$ARTIFACT_MANIFEST"
-
-curl --fail --silent --show-error --location --proxy "$PROXY_URL" \
-  "https://api.github.com/repos/fzyzcjy/torch_memory_saver/releases/tags/v${RELEASE_VERSION}" \
-  --output "$GITHUB_JSON"
-test "$(jq --raw-output '.tag_name' "$GITHUB_JSON")" = "v${RELEASE_VERSION}"
-if [[ "$RELEASE_VERSION" =~ (a|b|rc)[0-9]+$ ]]; then
-  jq --exit-status '.prerelease == true' "$GITHUB_JSON"
-else
-  jq --exit-status '.prerelease == false' "$GITHUB_JSON"
-fi
 
 for runtime in \
   '12|docker.io/pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime' \

@@ -38,7 +38,7 @@ def test_published_release_script_uses_fresh_pypi_installs_and_runtime_tests() -
 
 
 def test_published_release_script_matches_approved_remote_artifacts() -> None:
-    """Post-release checks bind PyPI and GitHub state to the approved manifest."""
+    """Post-release checks bind PyPI state to the approved manifest."""
 
     source = (
         Path(__file__)
@@ -49,11 +49,25 @@ def test_published_release_script_matches_approved_remote_artifacts() -> None:
     assert 'test "$(wc -l < "$ARTIFACT_MANIFEST")" -eq 3' in source
     assert 'test "$(jq ' in source
     assert ".digests.sha256" in source
-    assert "api.github.com/repos/fzyzcjy/torch_memory_saver/releases/tags" in source
-    assert "'.tag_name'" in source
-    assert "'.prerelease == true'" in source
-    assert "'.prerelease == false'" in source
     assert 'echo "RESULT: returncode=$status"' in source
+
+
+def test_release_workflow_forbids_github_releases() -> None:
+    """The release workflow never creates or requires a GitHub Release."""
+
+    script_directory = Path(__file__).parent
+    sources = [
+        script_directory.parent.joinpath("SKILL.md").read_text(encoding="utf-8"),
+        script_directory.joinpath("release_checks.py").read_text(encoding="utf-8"),
+        script_directory.joinpath("verify_published_release.sh").read_text(
+            encoding="utf-8"
+        ),
+    ]
+
+    assert "Never create a GitHub Release" in sources[0]
+    for source in sources:
+        assert "gh release create" not in source
+        assert "/releases/tags/" not in source
 
 
 def test_published_release_script_checks_each_host_dependency() -> None:
