@@ -498,14 +498,25 @@ def _exec_command(
     with log_path.open(mode="a", encoding="utf-8") as output:
         output.write(f"EXEC: {rendered_command}\n")
         output.flush()
-        result = subprocess.run(
-            command,
-            check=False,
-            stdout=output,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=_COMMAND_TIMEOUT_SECONDS,
-        )
+        try:
+            result = subprocess.run(
+                command,
+                check=False,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=_COMMAND_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as error:
+            output.write(f"RESULT: timeout={error.timeout} seconds\n")
+            output.flush()
+            raise
+        except OSError as error:
+            output.write(f"RESULT: error={type(error).__name__}: {error}\n")
+            output.flush()
+            raise
+        output.write(f"RESULT: returncode={result.returncode}\n")
+        output.flush()
 
     if check and result.returncode != 0:
         raise subprocess.CalledProcessError(

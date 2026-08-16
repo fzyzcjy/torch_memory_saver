@@ -626,6 +626,73 @@ class TestGpuValidationCommand:
         )
 
         assert captured_timeouts == [gpu_validation._COMMAND_TIMEOUT_SECONDS]
+        assert (tmp_path / "command.log").read_text(encoding="utf-8") == (
+            "EXEC: docker info\nRESULT: returncode=0\n"
+        )
+
+    def test_exec_command_logs_nonzero_result_before_raising(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A failed command records its return code before propagating."""
+
+        def fail_run(
+            command: list[str],
+            *,
+            check: bool,
+            stdout: object,
+            stderr: int,
+            text: bool,
+            timeout: float | None,
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(args=command, returncode=17)
+
+        monkeypatch.setattr(gpu_validation.subprocess, "run", fail_run)
+        log_path = tmp_path / "command.log"
+
+        with pytest.raises(subprocess.CalledProcessError):
+            gpu_validation._exec_command(
+                command=["docker", "info"],
+                log_path=log_path,
+            )
+
+        assert log_path.read_text(encoding="utf-8") == (
+            "EXEC: docker info\nRESULT: returncode=17\n"
+        )
+
+    def test_exec_command_logs_timeout_before_raising(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A timed-out command records the terminal result before propagating."""
+
+        def timeout_run(
+            command: list[str],
+            *,
+            check: bool,
+            stdout: object,
+            stderr: int,
+            text: bool,
+            timeout: float | None,
+        ) -> subprocess.CompletedProcess[str]:
+            raise subprocess.TimeoutExpired(command, timeout=timeout)
+
+        monkeypatch.setattr(gpu_validation.subprocess, "run", timeout_run)
+        log_path = tmp_path / "command.log"
+
+        with pytest.raises(subprocess.TimeoutExpired):
+            gpu_validation._exec_command(
+                command=["docker", "info"],
+                log_path=log_path,
+            )
+
+        expected_log: str = (
+            "EXEC: docker info\n"
+            f"RESULT: timeout={gpu_validation._COMMAND_TIMEOUT_SECONDS} seconds\n"
+        )
+        assert log_path.read_text(encoding="utf-8") == expected_log
 
     def test_best_effort_image_inspect_suppresses_timeout(
         self,

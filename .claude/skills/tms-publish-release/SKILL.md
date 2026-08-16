@@ -19,7 +19,7 @@ description: Use when preparing, building, validating, publishing, or verifying 
 - Publish from the local controller.
 - Never persist PyPI credentials on the GPU host.
 - Treat PyPI upload and Git tag push as irreversible.
-- Complete the Section 7 confirmation gate before either action.
+- Complete the Section 8 confirmation gate before either action.
 
 # 2 Preflight
 
@@ -229,6 +229,8 @@ Skip review: inspect every reason
 CLI deselection: forbidden
 Additional skip: forbidden
 Evidence: image identity, environment, commands, installed paths, binaries, pytest output
+Command log: EXEC line, complete stdout/stderr, terminal RESULT line
+Container shell trace: set -euxo pipefail records each in-container command
 Cleanup: named clients, servers, containers, and private networks removed on success or failure
 ```
 
@@ -283,15 +285,42 @@ UV_CACHE_DIR="$TMS_LOCAL_ARTIFACTS/uv-cache" uv run --no-project --with twine \
 - Do not upload directly from the remote build directory.
 - Keep all three distribution files and full logs at the permanent local artifact path.
 
-# 7 Publish
+# 7 Write the release evidence report
 
-- Present the release evidence to the human:
-    - Exact version.
-    - Full release SHA.
-    - Three filenames and SHA-256 hashes.
-    - Four fresh-container GPU results.
-    - Explicit Lupine qualification boundary.
-- Continue only after explicit confirmation.
+- Write one Markdown report in the matching local agent-context project `agent-drafts/` directory.
+- Use the exact version and run ID in the filename.
+- Link every raw artifact and log with its final absolute local path.
+- Do not copy raw logs into the report.
+- Set `Human review: pending` until the report has been inspected.
+
+```text
+Source: full release SHA, branch, clean-tree evidence
+Version: canonical version and collision-check results
+Host: workstation, GPU, driver, kernel, Docker, binfmt
+Artifacts: filename, size, SHA-256, metadata result, twine result, file link
+Build evidence: x86_64 log, aarch64 log, sdist log, artifact-validator log
+GPU matrix row: architecture, CUDA major, image digest, PyTorch/CUDA/GPU identity
+GPU matrix result: pytest summary, every skip reason, terminal RESULT, log link
+Lupine boundary: TMS_TEST_LUPINE signal, exact skipped tests, qualification limit
+Cleanup: validation containers, server, and network removal evidence
+Safety: PyPI upload, release tag, and GitHub Release not performed
+Human review: pending
+```
+
+- Link all five harness logs:
+    - `preflight.log`.
+    - `x86_64-cuda12-gpu.log`.
+    - `x86_64-cuda13-gpu.log`.
+    - `aarch64-cuda12-gpu.log`.
+    - `aarch64-cuda13-gpu.log`.
+- Require every harness-invoked external command to have an `EXEC` line and a terminal `RESULT` line.
+- Require every GPU row to link the exact log containing image identity, pytest output, skip reasons, and cleanup.
+- Stop after writing the report.
+- Give the human the report link and wait for explicit publish approval.
+
+# 8 Publish
+
+- Continue only after the Section 7 report has been reviewed and the human gives explicit confirmation.
 - Re-fetch `origin/master` and repeat the clean-tree and exact-SHA checks immediately before upload.
 - Recheck every immutable release namespace:
 
@@ -328,7 +357,7 @@ gh release create "v$TMS_RELEASE_VERSION" \
 - Omit `--prerelease` for a stable release.
 - Never reuse or move a published version tag.
 
-# 8 Post-release verification
+# 9 Post-release verification
 
 ```bash
 curl -fsSL "https://pypi.org/pypi/torch-memory-saver/$TMS_RELEASE_VERSION/json"
@@ -342,7 +371,7 @@ gh release view "v$TMS_RELEASE_VERSION" --repo fzyzcjy/torch_memory_saver
 - Never delete a published PyPI version to make a retry look clean.
 - Increment the prerelease number for a retry.
 
-# 9 Reliability
+# 10 Reliability
 
 | Symptom | Cause | Action |
 | --- | --- | --- |
