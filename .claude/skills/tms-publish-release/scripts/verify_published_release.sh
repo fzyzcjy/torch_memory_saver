@@ -24,7 +24,9 @@ readonly EXPECTED_PYTEST_SKIPS='{
 trap 'status=$?; rm -f "$PYPI_JSON" "$GITHUB_JSON"; echo "RESULT: returncode=$status"; exit "$status"' EXIT
 
 test "$(uname -m)" = "x86_64"
-command -v curl jq docker
+for executable in curl jq docker; do
+  command -v "$executable"
+done
 test -f "$ARTIFACT_MANIFEST"
 test "$(wc -l < "$ARTIFACT_MANIFEST")" -eq 3
 
