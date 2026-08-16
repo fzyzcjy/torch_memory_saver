@@ -96,6 +96,8 @@ def merge(input_wheels: list[Path], out_path: Path) -> None:
             if compat_name not in merged:
                 merged[compat_name] = merged[name]
 
+    _rewrite_wheel_tag(merged=merged, out_name=out_path.name)
+
     # Rebuild RECORD: one line per file, then the RECORD's own entry with empty hash/size.
     record_lines: list[str] = []
     for name, data in sorted(merged.items()):
@@ -109,6 +111,31 @@ def merge(input_wheels: list[Path], out_path: Path) -> None:
         for name, data in merged.items():
             zf.writestr(name, data)
         zf.writestr(record_name, record_bytes)
+
+
+def _rewrite_wheel_tag(*, merged: dict[str, bytes], out_name: str) -> None:
+    wheel_names = sorted(name for name in merged if name.endswith(".dist-info/WHEEL"))
+    if len(wheel_names) != 1:
+        raise SystemExit(
+            f"Expected exactly one WHEEL metadata file, found {wheel_names}."
+        )
+
+    filename_parts = out_name.removesuffix(".whl").rsplit("-", 3)
+    if len(filename_parts) != 4:
+        raise SystemExit(f"Could not parse compatibility tag from {out_name!r}.")
+    expected_tag = "-".join(filename_parts[-3:])
+
+    wheel_name = wheel_names[0]
+    lines = merged[wheel_name].decode("utf-8").splitlines()
+    tag_indexes = [
+        index for index, line in enumerate(lines) if line.startswith("Tag: ")
+    ]
+    if len(tag_indexes) != 1:
+        raise SystemExit(
+            f"Expected exactly one Tag entry in {wheel_name}, found {tag_indexes}."
+        )
+    lines[tag_indexes[0]] = f"Tag: {expected_tag}"
+    merged[wheel_name] = ("\n".join(lines) + "\n").encode("utf-8")
 
 
 def main() -> None:

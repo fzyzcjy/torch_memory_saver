@@ -16,7 +16,7 @@ reinstall:
 
 .PHONY:clean
 clean:
-	rm -rf dist/*
+	rm -rf dist build torch_memory_saver.egg-info ./*.so
 
 .PHONY:build-wheel
 build-wheel:
@@ -44,8 +44,15 @@ build-xpu:
 
 .PHONY:build-sdist
 build-sdist:
-	# python3 -m build --no-isolation
-	python3 setup.py sdist --dist-dir=dist
+	docker run --rm \
+	  -e TMS_HOST_UID=$$(id -u) \
+	  -e TMS_HOST_GID=$$(id -g) \
+	  -v $(CURDIR):/app \
+	  $${TMS_PYTHON_BUILD_IMAGE:-python:3.11} \
+	  /bin/bash -c "pip install --no-cache-dir setuptools==75.0.0 \
+	  && cd /app \
+	  && TMS_CUDA_MAJOR=12 python setup.py sdist --dist-dir=dist \
+	  && chown -R \"\$${TMS_HOST_UID}:\$${TMS_HOST_GID}\" /app/dist /app/torch_memory_saver.egg-info"
 
 .PHONY:upload
 upload:

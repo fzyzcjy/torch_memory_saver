@@ -1,0 +1,4 @@
+interface:
+  display_name: "TMS Publish Release"
+  short_description: "Build, validate, and publish TMS releases"
+  default_prompt: "Use $tms-publish-release to prepare and publish a torch_memory_saver release."
