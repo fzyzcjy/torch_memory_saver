@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import base64
+import csv
+import hashlib
 import importlib.util
+import subprocess
 import sys
 import tarfile
 import zipfile
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from types import ModuleType
 from urllib.error import HTTPError
@@ -252,6 +256,92 @@ class TestPublishPreflight:
         )
 
 
+class TestCommandLogging:
+    def test_run_command_records_command_output_and_result(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Evidence logging preserves command output and terminal status."""
+
+        def complete_run(
+            command: list[str],
+            *,
+            check: bool,
+            stdout: object,
+            stderr: int,
+            text: bool,
+            timeout: float | None,
+        ) -> subprocess.CompletedProcess[str]:
+            stdout.write("command output\n")
+            return subprocess.CompletedProcess(args=command, returncode=0)
+
+        monkeypatch.setattr(release_checks.subprocess, "run", complete_run)
+        log_path = tmp_path / "evidence.log"
+
+        result = cli_runner.invoke(
+            release_checks.app,
+            ["run", "--log-path", str(log_path), "--", "example", "--flag"],
+        )
+
+        assert result.exit_code == 0
+        assert log_path.read_text(encoding="utf-8") == (
+            "EXEC: example --flag\ncommand output\nRESULT: returncode=0\n"
+        )
+
+    def test_run_command_propagates_nonzero_result(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A failed evidence command keeps its return code and stops the workflow."""
+
+        def fail_run(
+            command: list[str],
+            *,
+            check: bool,
+            stdout: object,
+            stderr: int,
+            text: bool,
+            timeout: float | None,
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(args=command, returncode=19)
+
+        monkeypatch.setattr(release_checks.subprocess, "run", fail_run)
+        log_path = tmp_path / "evidence.log"
+
+        result = cli_runner.invoke(
+            release_checks.app,
+            ["run", "--log-path", str(log_path), "--", "example"],
+        )
+
+        assert result.exit_code == 19
+        assert log_path.read_text(encoding="utf-8").endswith("RESULT: returncode=19\n")
+
+    def test_run_command_records_timeout(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A timed-out evidence command leaves a terminal timeout record."""
+
+        def timeout_run(
+            *args: object, **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            raise subprocess.TimeoutExpired(cmd=["example"], timeout=7)
+
+        monkeypatch.setattr(release_checks.subprocess, "run", timeout_run)
+        log_path = tmp_path / "evidence.log"
+
+        result = cli_runner.invoke(
+            release_checks.app,
+            ["run", "--log-path", str(log_path), "--", "example"],
+        )
+
+        assert result.exit_code != 0
+        assert log_path.read_text(encoding="utf-8").endswith(
+            "RESULT: timeout=7 seconds\n"
+        )
+
+
 class TestArtifactValidation:
     def test_complete_release_artifact_set_is_accepted(self, tmp_path: Path) -> None:
         """Both architecture wheels and the sdist satisfy the release gate."""
@@ -355,6 +445,137 @@ class TestArtifactValidation:
                 repo_root=tmp_path,
             )
 
+    def test_missing_wheel_record_is_rejected(self, tmp_path: Path) -> None:
+        """A wheel without RECORD cannot pass the artifact gate."""
+
+        _write_release_artifacts(dist_dir=tmp_path, version="0.0.10b1")
+        wheel_path = (
+            tmp_path / "torch_memory_saver-0.0.10b1-cp39-abi3-manylinux2014_x86_64.whl"
+        )
+        _rewrite_wheel_without_record_update(
+            wheel_path=wheel_path,
+            removed_suffix=".dist-info/RECORD",
+        )
+
+        with pytest.raises(ValueError, match="exactly one file ending.*RECORD"):
+            release_checks.validate_release_artifacts(
+                dist_dir=tmp_path,
+                expected_version="0.0.10b1",
+                repo_root=tmp_path,
+            )
+
+    @pytest.mark.parametrize("field", ["hash", "size"])
+    def test_corrupt_wheel_record_entry_is_rejected(
+        self,
+        field: str,
+        tmp_path: Path,
+    ) -> None:
+        """A stale RECORD hash or size cannot pass the artifact gate."""
+
+        _write_release_artifacts(dist_dir=tmp_path, version="0.0.10b1")
+        wheel_path = (
+            tmp_path / "torch_memory_saver-0.0.10b1-cp39-abi3-manylinux2014_x86_64.whl"
+        )
+        _corrupt_wheel_record(wheel_path=wheel_path, field=field)
+
+        with pytest.raises(ValueError, match=f"RECORD {field} mismatch"):
+            release_checks.validate_release_artifacts(
+                dist_dir=tmp_path,
+                expected_version="0.0.10b1",
+                repo_root=tmp_path,
+            )
+
+    @pytest.mark.parametrize(
+        ("corruption", "message"),
+        [
+            ("duplicate", "Duplicate RECORD path"),
+            ("missing", "RECORD member set mismatch"),
+            ("self", "RECORD self-entry must omit hash and size"),
+        ],
+    )
+    def test_invalid_wheel_record_structure_is_rejected(
+        self,
+        corruption: str,
+        message: str,
+        tmp_path: Path,
+    ) -> None:
+        """RECORD must map each wheel member exactly once with an empty self-entry."""
+
+        _write_release_artifacts(dist_dir=tmp_path, version="0.0.10b1")
+        wheel_path = (
+            tmp_path / "torch_memory_saver-0.0.10b1-cp39-abi3-manylinux2014_x86_64.whl"
+        )
+        _corrupt_wheel_record(wheel_path=wheel_path, field=corruption)
+
+        with pytest.raises(ValueError, match=message):
+            release_checks.validate_release_artifacts(
+                dist_dir=tmp_path,
+                expected_version="0.0.10b1",
+                repo_root=tmp_path,
+            )
+
+    def test_sha256_manifest_rejects_artifact_changed_after_review(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """The publish recheck rejects an artifact changed after human review."""
+
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        artifact_path = dist_dir / "artifact.whl"
+        artifact_path.write_bytes(b"approved")
+        manifest = tmp_path / "artifacts.sha256"
+        release_checks.write_sha256_manifest(dist_dir=dist_dir, output=manifest)
+
+        release_checks.verify_sha256_manifest(
+            dist_dir=dist_dir,
+            manifest=manifest,
+        )
+        artifact_path.write_bytes(b"replaced")
+
+        with pytest.raises(ValueError, match="SHA-256 mismatch"):
+            release_checks.verify_sha256_manifest(
+                dist_dir=dist_dir,
+                manifest=manifest,
+            )
+
+    @pytest.mark.parametrize("change", ["add", "remove"])
+    def test_sha256_manifest_rejects_artifact_set_changes(
+        self,
+        change: str,
+        tmp_path: Path,
+    ) -> None:
+        """The approved manifest covers the exact final artifact filename set."""
+
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        artifact_path = dist_dir / "artifact.whl"
+        artifact_path.write_bytes(b"approved")
+        manifest = tmp_path / "artifacts.sha256"
+        release_checks.write_sha256_manifest(dist_dir=dist_dir, output=manifest)
+        if change == "add":
+            (dist_dir / "unexpected.tar.gz").write_bytes(b"unexpected")
+        else:
+            artifact_path.unlink()
+
+        with pytest.raises(ValueError, match="manifest artifact set mismatch"):
+            release_checks.verify_sha256_manifest(
+                dist_dir=dist_dir,
+                manifest=manifest,
+            )
+
+    def test_sha256_manifest_cannot_be_overwritten(self, tmp_path: Path) -> None:
+        """A reviewed manifest cannot be silently regenerated in place."""
+
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        (dist_dir / "artifact.whl").write_bytes(b"approved")
+        manifest = tmp_path / "artifacts.sha256"
+        release_checks.write_sha256_manifest(dist_dir=dist_dir, output=manifest)
+
+        with pytest.raises(ValueError, match="Refusing to overwrite"):
+            release_checks.write_sha256_manifest(dist_dir=dist_dir, output=manifest)
+
     def test_missing_backend_source_is_rejected(self, tmp_path: Path) -> None:
         """An sdist missing a platform backend source cannot pass validation."""
 
@@ -402,17 +623,23 @@ def _write_release_artifacts(
 
 def _write_wheel(*, wheel_path: Path, version: str, architecture: str) -> None:
     metadata_root = f"torch_memory_saver-{version}.dist-info"
-    with zipfile.ZipFile(wheel_path, mode="w") as wheel:
-        wheel.writestr(
-            f"{metadata_root}/METADATA",
-            f"Name: torch-memory-saver\nVersion: {version}\n",
-        )
-        wheel.writestr(
-            f"{metadata_root}/WHEEL",
-            f"Wheel-Version: 1.0\nTag: cp39-abi3-manylinux2014_{architecture}\n",
-        )
-        for binary_name in release_checks._EXPECTED_BINARY_NAMES:
-            wheel.writestr(binary_name, _elf_header(architecture=architecture))
+    contents = {
+        f"{metadata_root}/METADATA": (
+            f"Name: torch-memory-saver\nVersion: {version}\n"
+        ).encode(),
+        f"{metadata_root}/WHEEL": (
+            f"Wheel-Version: 1.0\nTag: cp39-abi3-manylinux2014_{architecture}\n"
+        ).encode(),
+        **{
+            binary_name: _elf_header(architecture=architecture)
+            for binary_name in release_checks._EXPECTED_BINARY_NAMES
+        },
+    }
+    _write_wheel_contents(
+        wheel_path=wheel_path,
+        contents=contents,
+        record_name=f"{metadata_root}/RECORD",
+    )
 
 
 def _write_sdist(
@@ -442,21 +669,101 @@ def _write_sdist(
 
 def _rewrite_wheel_without(*, wheel_path: Path, removed_name: str) -> None:
     with zipfile.ZipFile(wheel_path) as wheel:
+        record_name = next(
+            name for name in wheel.namelist() if name.endswith(".dist-info/RECORD")
+        )
         contents = {
-            name: wheel.read(name) for name in wheel.namelist() if name != removed_name
+            name: wheel.read(name)
+            for name in wheel.namelist()
+            if name not in {removed_name, record_name}
+        }
+    _write_wheel_contents(
+        wheel_path=wheel_path,
+        contents=contents,
+        record_name=record_name,
+    )
+
+
+def _rewrite_wheel_file(*, wheel_path: Path, target_name: str, content: bytes) -> None:
+    with zipfile.ZipFile(wheel_path) as wheel:
+        record_name = next(
+            name for name in wheel.namelist() if name.endswith(".dist-info/RECORD")
+        )
+        contents = {
+            name: wheel.read(name) for name in wheel.namelist() if name != record_name
+        }
+    contents[target_name] = content
+    _write_wheel_contents(
+        wheel_path=wheel_path,
+        contents=contents,
+        record_name=record_name,
+    )
+
+
+def _write_wheel_contents(
+    *,
+    wheel_path: Path,
+    contents: dict[str, bytes],
+    record_name: str,
+) -> None:
+    record_output = StringIO()
+    writer = csv.writer(record_output, lineterminator="\n")
+    for name, content in sorted(contents.items()):
+        digest = (
+            base64.urlsafe_b64encode(hashlib.sha256(content).digest())
+            .rstrip(b"=")
+            .decode("ascii")
+        )
+        writer.writerow((name, f"sha256={digest}", str(len(content))))
+    writer.writerow((record_name, "", ""))
+
+    with zipfile.ZipFile(wheel_path, mode="w") as wheel:
+        for name, content in contents.items():
+            wheel.writestr(name, content)
+        wheel.writestr(record_name, record_output.getvalue())
+
+
+def _rewrite_wheel_without_record_update(
+    *,
+    wheel_path: Path,
+    removed_suffix: str,
+) -> None:
+    with zipfile.ZipFile(wheel_path) as wheel:
+        contents = {
+            name: wheel.read(name)
+            for name in wheel.namelist()
+            if not name.endswith(removed_suffix)
         }
     with zipfile.ZipFile(wheel_path, mode="w") as wheel:
         for name, content in contents.items():
             wheel.writestr(name, content)
 
 
-def _rewrite_wheel_file(*, wheel_path: Path, target_name: str, content: bytes) -> None:
+def _corrupt_wheel_record(*, wheel_path: Path, field: str) -> None:
     with zipfile.ZipFile(wheel_path) as wheel:
         contents = {name: wheel.read(name) for name in wheel.namelist()}
-    contents[target_name] = content
+        record_name = next(
+            name for name in contents if name.endswith(".dist-info/RECORD")
+        )
+    rows = list(csv.reader(StringIO(contents[record_name].decode())))
+    target_row = next(row for row in rows if row[0].endswith(".dist-info/WHEEL"))
+    if field in {"hash", "size"}:
+        target_row[1 if field == "hash" else 2] = "broken"
+    elif field == "duplicate":
+        rows.append(target_row.copy())
+    elif field == "missing":
+        rows.remove(target_row)
+    elif field == "self":
+        next(row for row in rows if row[0] == record_name)[1] = "sha256=broken"
+    else:
+        raise ValueError(f"Unknown RECORD corruption: {field}")
+    record_output = StringIO()
+    csv.writer(record_output, lineterminator="\n").writerows(rows)
+    contents[record_name] = record_output.getvalue().encode()
+
     with zipfile.ZipFile(wheel_path, mode="w") as wheel:
-        for name, existing_content in contents.items():
-            wheel.writestr(name, existing_content)
+        for name, content in contents.items():
+            wheel.writestr(name, content)
 
 
 def _elf_header(*, architecture: str) -> bytes:

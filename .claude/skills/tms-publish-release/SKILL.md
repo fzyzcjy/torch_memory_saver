@@ -21,44 +21,67 @@ description: Use when preparing, building, validating, publishing, or verifying 
 - Treat PyPI upload and Git tag push as irreversible.
 - Complete the Section 8 confirmation gate before either action.
 
-# 2 Preflight
-
-## 2.1 Repository and version
+# 2 Prepare isolated paths
 
 ```bash
-git fetch origin master
-git status --short --branch
-git rev-parse HEAD
-git rev-parse origin/master
-git diff --stat origin/master...HEAD
+export TMS_RELEASE_VERSION=<VERSION>
+export TMS_RELEASE_SHA="$(git rev-parse --short=12 HEAD)"
+export TMS_RELEASE_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+export TMS_REMOTE_ROOT="/home/tom/workspace/torch_memory_saver_release_${TMS_RELEASE_VERSION}_${TMS_RELEASE_SHA}_${TMS_RELEASE_RUN_ID}"
+export TMS_REMOTE_ARTIFACTS="${TMS_REMOTE_ROOT}_artifacts"
+export TMS_LOCAL_ARTIFACTS="/Users/tom/domains/human/others/artifacts/torch_memory_saver/${TMS_RELEASE_VERSION}-${TMS_RELEASE_SHA}-${TMS_RELEASE_RUN_ID}-release"
+export TMS_RELEASE_CHECKS="$PWD/.claude/skills/tms-publish-release/scripts/release_checks.py"
+mkdir "$TMS_LOCAL_ARTIFACTS"
+```
+
+- Never reuse a local or remote source or artifact directory, even for the same version and commit.
+- Keep every build, validation, environment, and recheck log under the unique artifact directories.
+
+# 3 Preflight
+
+## 3.1 Repository and version
+
+- Append every command, complete output, and exit result to `release-preflight.log`:
+
+```bash
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- git fetch origin master
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- git status --short --branch
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- git rev-parse HEAD
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- git rev-parse origin/master
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- git diff --stat origin/master...HEAD
 ```
 
 - Stop if the tree is dirty, `HEAD` differs from `origin/master`, or the release commit is detached.
 - Read and validate the version without importing `setup.py`:
 
 ```bash
-uv run --script .claude/skills/tms-publish-release/scripts/release_checks.py version \
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- \
+  uv run --script "$TMS_RELEASE_CHECKS" version \
   --setup-py setup.py \
-  --expected-version <VERSION>
+  --expected-version "$TMS_RELEASE_VERSION"
 ```
 
 - Confirm the target version does not already exist on PyPI:
 
 ```bash
-uv run --script .claude/skills/tms-publish-release/scripts/release_checks.py pypi \
-  --expected-version <VERSION>
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- \
+  uv run --script "$TMS_RELEASE_CHECKS" pypi \
+  --expected-version "$TMS_RELEASE_VERSION"
 ```
 
 - Review every change since the previous release commit.
 - Use `c29087a58db9d120b3e69623714c5dd043029d77` as the historical source baseline for the first tagged release after `0.0.9.post1`.
 - Use the previous release tag after the first tagged release.
 
-## 2.2 Host and credential checks
+## 3.2 Host and credential checks
 
 ```bash
-ssh tom-workstation 'curl --retry 5 --retry-delay 1 --retry-all-errors -x http://127.0.0.1:7890 -I --max-time 20 https://registry-1.docker.io/v2/'
-ssh tom-workstation 'test -x /home/tom/.local/bin/uv; nvidia-smi --query-gpu=index,name,driver_version,memory.total,memory.used,utilization.gpu --format=csv,noheader; docker version; df -h / /home/tom'
-/usr/bin/stat -f '%N mode=%Lp size=%z' "$HOME/.pypirc"
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- \
+  ssh tom-workstation 'curl --retry 5 --retry-delay 1 --retry-all-errors -x http://127.0.0.1:7890 -I --max-time 20 https://registry-1.docker.io/v2/'
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- \
+  ssh tom-workstation 'test -x /home/tom/.local/bin/uv; nvidia-smi --query-gpu=index,name,driver_version,memory.total,memory.used,utilization.gpu --format=csv,noheader; docker version; df -h / /home/tom'
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- \
+  /usr/bin/stat -f '%N mode=%Lp size=%z' "$HOME/.pypirc"
 ```
 
 - Expect HTTP `401` from the Docker Hub registry probe; it proves official registry reachability.
@@ -68,13 +91,14 @@ ssh tom-workstation 'test -x /home/tom/.local/bin/uv; nvidia-smi --query-gpu=ind
 - Never copy it to `tom-workstation`.
 - Never mount it into a long-lived container.
 
-## 2.3 ARM64 emulation on the x86_64 host
+## 3.3 ARM64 emulation on the x86_64 host
 
 - The official `manylinuxaarch64-builder` images are Linux ARM64 images, not x86 cross-compiler images.
 - Check for an existing ARM64 binfmt handler:
 
 ```bash
-ssh tom-workstation 'test -r /proc/sys/fs/binfmt_misc/qemu-aarch64 && cat /proc/sys/fs/binfmt_misc/qemu-aarch64'
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- \
+  ssh tom-workstation 'test -r /proc/sys/fs/binfmt_misc/qemu-aarch64 && cat /proc/sys/fs/binfmt_misc/qemu-aarch64'
 ```
 
 - If it is missing, stop for approval before installing QEMU binfmt.
@@ -83,7 +107,8 @@ ssh tom-workstation 'test -r /proc/sys/fs/binfmt_misc/qemu-aarch64 && cat /proc/
 - After approval, install only ARM64 and verify it with an ARM64 Alpine container:
 
 ```bash
-ssh tom-workstation 'docker run --privileged --rm tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- \
+  ssh tom-workstation 'docker run --privileged --rm tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64
 cat /proc/sys/fs/binfmt_misc/qemu-aarch64
 docker run --rm --platform linux/arm64 alpine:3.22 uname -m'
 ```
@@ -91,29 +116,25 @@ docker run --rm --platform linux/arm64 alpine:3.22 uname -m'
 - Require the smoke test to print `aarch64`.
 - Treat binfmt as boot-scoped unless the host has an explicit persistent registration. Recheck this section after every workstation reboot.
 
-## 2.4 Release script roles
+## 3.4 Release script roles
 
 | Script | Responsibility | Mutates release state |
 | --- | --- | --- |
-| `.claude/skills/tms-publish-release/scripts/release_checks.py` | `version`, `pypi`, `sdist`, `artifacts`, and `publish-preflight` gates | No |
-| `.claude/skills/tms-publish-release/scripts/gpu_validation.py` | Four-cell fresh-container GPU runtime harness | Creates only temporary validation resources |
+| `.claude/skills/tms-publish-release/scripts/release_checks.py` | Version, namespace, artifact, manifest, publish-preflight, and append-only command-log gates | No |
+| `.claude/skills/tms-publish-release/scripts/gpu_validation.py` | Four-cell fresh-container GPU runtime harness with exact skip enforcement | Creates only temporary validation resources |
+| `.claude/skills/tms-publish-release/scripts/pytest_skip_gate.py` | Exact pytest skipped-node and reason validator loaded by the harness | No |
 
 - Keep upload, tag creation, and GitHub Release creation outside both scripts.
 - Use `sdist` only for focused diagnostics.
 - Use `artifacts` for the canonical release workflow after all three distributions exist.
 
-# 3 Prepare isolated paths
+## 3.5 Create and synchronize the remote source tree
 
 ```bash
-export TMS_RELEASE_VERSION=<VERSION>
-export TMS_RELEASE_SHA="$(git rev-parse --short=12 HEAD)"
-export TMS_RELEASE_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
-export TMS_REMOTE_ROOT="/home/tom/workspace/torch_memory_saver_release_${TMS_RELEASE_VERSION}_${TMS_RELEASE_SHA}_${TMS_RELEASE_RUN_ID}"
-export TMS_REMOTE_ARTIFACTS="${TMS_REMOTE_ROOT}_artifacts"
-export TMS_LOCAL_ARTIFACTS="/Users/tom/domains/human/others/artifacts/torch_memory_saver/${TMS_RELEASE_VERSION}-${TMS_RELEASE_SHA}-${TMS_RELEASE_RUN_ID}-release"
-mkdir "$TMS_LOCAL_ARTIFACTS"
-ssh tom-workstation "test ! -e '$TMS_REMOTE_ROOT' && test ! -e '$TMS_REMOTE_ARTIFACTS' && mkdir '$TMS_REMOTE_ROOT' '$TMS_REMOTE_ARTIFACTS'"
-rsync -a \
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- \
+  ssh tom-workstation "test ! -e '$TMS_REMOTE_ROOT' && test ! -e '$TMS_REMOTE_ARTIFACTS' && mkdir '$TMS_REMOTE_ROOT' '$TMS_REMOTE_ARTIFACTS'"
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- \
+  rsync -a \
   --exclude .git \
   --exclude build \
   --exclude dist \
@@ -121,14 +142,14 @@ rsync -a \
   --exclude .pytest_cache \
   --exclude '*.so' \
   ./ "tom-workstation:$TMS_REMOTE_ROOT/"
-shasum -a 256 setup.py
-ssh tom-workstation "sha256sum '$TMS_REMOTE_ROOT/setup.py'"
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- shasum -a 256 setup.py
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- \
+  ssh tom-workstation "sha256sum '$TMS_REMOTE_ROOT/setup.py'"
 ```
 
 - Do not use `rsync --delete`.
-- **Isolation**: Never reuse a remote source or artifact directory, even for the same version and commit.
-    - The fail-if-present `mkdir` and run ID make every rehearsal independent.
-- **Logs**: Put every build, validation, and environment log in the unique remote artifact directory.
+- Require the local and remote `setup.py` hashes to match.
+- The fail-if-present remote `mkdir` makes every rehearsal independent.
 
 # 4 Build release distributions
 
@@ -225,9 +246,10 @@ Inventory gate: every repository test_*.py classified as runtime or build toolin
 Build-tool UT: build phase only
 Success: zero failures in all four cells
 Allowed skips: documented Lupine host-memory cases, single-GPU multi-device cases, XPU-only cases
-Skip review: inspect every reason
+Skip gate: exact node ID and normalized reason map passed through TMS_EXPECTED_PYTEST_SKIPS
+Skip result: SKIP_GATE_ACTUAL and SKIP_GATE_RESULT recorded in the cell log
 CLI deselection: forbidden
-Additional skip: forbidden
+Missing, additional, duplicated, or reason-changed skip: cell failure
 Evidence: image identity, environment, commands, installed paths, binaries, pytest output
 Command log: EXEC line, complete stdout/stderr, terminal RESULT line
 Container shell trace: set -euxo pipefail records each in-container command
@@ -255,6 +277,7 @@ Disk-backup boundary: Lupine protects pinned host mirrors read-only, so kernel p
 RSS boundary: Lupine first-transfer buffers invalidate the preload RSS delta assertion
 Product-code workaround: forbidden; keep both behaviors covered by the direct x86_64 cells
 Derived client image: forbidden
+Server evidence: complete Lupine server output captured with docker logs before cleanup
 ```
 
 ## 5.2 Run the harness
@@ -271,19 +294,27 @@ ssh tom-workstation "HTTP_PROXY=http://127.0.0.1:7890 HTTPS_PROXY=http://127.0.0
 # 6 Pull and recheck artifacts locally
 
 ```bash
-rsync -a "tom-workstation:$TMS_REMOTE_ARTIFACTS/" "$TMS_LOCAL_ARTIFACTS/"
-rsync -a "tom-workstation:$TMS_REMOTE_ROOT/dist/" "$TMS_LOCAL_ARTIFACTS/dist/"
-uv run --script .claude/skills/tms-publish-release/scripts/release_checks.py artifacts \
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/local-recheck.log" -- \
+  rsync -a "tom-workstation:$TMS_REMOTE_ARTIFACTS/" "$TMS_LOCAL_ARTIFACTS/"
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/local-recheck.log" -- \
+  rsync -a "tom-workstation:$TMS_REMOTE_ROOT/dist/" "$TMS_LOCAL_ARTIFACTS/dist/"
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/local-recheck.log" -- \
+  uv run --script "$TMS_RELEASE_CHECKS" artifacts \
   --dist-dir "$TMS_LOCAL_ARTIFACTS/dist" \
   --expected-version "$TMS_RELEASE_VERSION" \
   --repo-root .
-shasum -a 256 "$TMS_LOCAL_ARTIFACTS"/dist/*
-UV_CACHE_DIR="$TMS_LOCAL_ARTIFACTS/uv-cache" uv run --no-project --with twine \
-  python -m twine check "$TMS_LOCAL_ARTIFACTS"/dist/*
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/local-recheck.log" -- \
+  zsh -lc 'UV_CACHE_DIR="$TMS_LOCAL_ARTIFACTS/uv-cache" uv run --no-project --with twine python -m twine check "$TMS_LOCAL_ARTIFACTS"/dist/*'
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/local-recheck.log" -- \
+  uv run --script "$TMS_RELEASE_CHECKS" write-manifest \
+  --dist-dir "$TMS_LOCAL_ARTIFACTS/dist" \
+  --output "$TMS_LOCAL_ARTIFACTS/artifacts.sha256"
 ```
 
 - Do not upload directly from the remote build directory.
 - Keep all three distribution files and full logs at the permanent local artifact path.
+- Treat `artifacts.sha256` as the immutable human-review boundary.
+- Never overwrite or regenerate the manifest after human review; start a new run instead.
 
 # 7 Write the release evidence report
 
@@ -298,7 +329,9 @@ Source: full release SHA, branch, clean-tree evidence
 Version: canonical version and collision-check results
 Host: workstation, GPU, driver, kernel, Docker, binfmt
 Artifacts: filename, size, SHA-256, metadata result, twine result, file link
+Preflight evidence: release-preflight.log
 Build evidence: x86_64 log, aarch64 log, sdist log, artifact-validator log
+Local evidence: local-recheck.log and artifacts.sha256
 GPU matrix row: architecture, CUDA major, image digest, PyTorch/CUDA/GPU identity
 GPU matrix result: pytest summary, every skip reason, terminal RESULT, log link
 Lupine boundary: TMS_TEST_LUPINE signal, exact skipped tests, qualification limit
@@ -313,6 +346,8 @@ Human review: pending
     - `x86_64-cuda13-gpu.log`.
     - `aarch64-cuda12-gpu.log`.
     - `aarch64-cuda13-gpu.log`.
+- Link `release-preflight.log`, `local-recheck.log`, and `artifacts.sha256`.
+- Transcribe the three manifest lines into the artifact table without changing their hashes.
 - Require every harness-invoked external command to have an `EXEC` line and a terminal `RESULT` line.
 - Require every GPU row to link the exact log containing image identity, pytest output, skip reasons, and cleanup.
 - Stop after writing the report.
@@ -321,16 +356,35 @@ Human review: pending
 # 8 Publish
 
 - Continue only after the Section 7 report has been reviewed and the human gives explicit confirmation.
-- Re-fetch `origin/master` and repeat the clean-tree and exact-SHA checks immediately before upload.
-- Recheck every immutable release namespace:
+- Append every immediate pre-upload check and its complete output to `publish-recheck.log`:
 
 ```bash
-uv run --script .claude/skills/tms-publish-release/scripts/release_checks.py publish-preflight \
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/publish-recheck.log" -- git fetch origin master
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/publish-recheck.log" -- git status --short --branch
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/publish-recheck.log" -- git rev-parse HEAD
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/publish-recheck.log" -- git rev-parse origin/master
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/publish-recheck.log" -- \
+  zsh -lc 'test -z "$(git status --porcelain)" && test "$(git rev-parse HEAD)" = "$(git rev-parse origin/master)"'
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/publish-recheck.log" -- \
+  uv run --script "$TMS_RELEASE_CHECKS" verify-manifest \
+  --dist-dir "$TMS_LOCAL_ARTIFACTS/dist" \
+  --manifest "$TMS_LOCAL_ARTIFACTS/artifacts.sha256"
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/publish-recheck.log" -- \
+  uv run --script "$TMS_RELEASE_CHECKS" artifacts \
+  --dist-dir "$TMS_LOCAL_ARTIFACTS/dist" \
+  --expected-version "$TMS_RELEASE_VERSION" \
+  --repo-root .
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/publish-recheck.log" -- \
+  zsh -lc 'UV_CACHE_DIR="$TMS_LOCAL_ARTIFACTS/uv-cache" uv run --no-project --with twine python -m twine check "$TMS_LOCAL_ARTIFACTS"/dist/*'
+uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/publish-recheck.log" -- \
+  uv run --script "$TMS_RELEASE_CHECKS" publish-preflight \
   --expected-version "$TMS_RELEASE_VERSION" \
   --remote origin \
   --repository fzyzcjy/torch_memory_saver
 ```
 
+- Require the verified manifest to equal the three hashes approved in the Section 7 report.
+- Upload only the files covered by that manifest.
 - Treat an existing PyPI version, remote `v<VERSION>` tag, or GitHub Release as a hard failure.
 - Treat network and authentication errors as hard failures.
 - Upload without `--skip-existing`; a collision is a hard failure:
@@ -386,5 +440,8 @@ gh release view "v$TMS_RELEASE_VERSION" --repo fzyzcjy/torch_memory_saver
 | `make clean` reports `Permission denied` under `dist/` | An older build left root-owned bind-mount output | Remove only the dedicated rehearsal output through a root Docker container, then use the current scripts that normalize ownership |
 | Wheel test imports `/workspace/torch_memory_saver` | Pytest ran against the source tree | Copy only `test/` to `/validation` and rerun against the installed wheel |
 | CUDA 13 preload tests report `libcudart.so.13` missing | The runtime image installs CUDART under Python `site-packages/nvidia/cu13/lib` without registering it in `ldconfig` | Discover the matching CUDART path before pytest and export it through `LD_LIBRARY_PATH`; do not skip preload tests |
+| `SKIP_GATE_RESULT=fail` | A skip is missing, additional, duplicated, or has a changed reason | Inspect `SKIP_GATE_ACTUAL`; update code or the reviewed matrix contract instead of silently accepting it |
+| Cleanup raises after a passing cell | Docker cleanup timed out or could not start | Inspect the complete cell log; the harness attempted every cleanup command and preserved any earlier validation error |
+| Manifest verification fails | An artifact changed or the file set differs after human review | Stop and start a new build and review run; never regenerate the approved manifest |
 | `dist/` has extra wheels | Stale or partial build output | Stop and start a new run directory; never repair or reuse a release tree |
 | PyPI upload reports an existing filename | Version or artifact was already published | Stop; never use `--skip-existing` or overwrite a release |

@@ -7,9 +7,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import platform
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +31,49 @@ _RUNTIME_TEST_MODULES = (
     "test_utils.py",
 )
 _BUILD_TOOL_TEST_MODULES = ("test_merge_cuda_wheels.py",)
+_MULTI_DEVICE_SKIP_REASON = "Multi-device test requires at least two devices"
+_XPU_SKIP_REASON = "XPU-specific path"
+_LUPINE_SKIP_REASON = (
+    "Lupine GPU-over-IP does not preserve native pinned-host or process RSS semantics"
+)
+_EXPECTED_SINGLE_GPU_SKIPS = (
+    *(
+        (
+            f"test/test_examples.py::{test_name}[{hook_mode}]",
+            _MULTI_DEVICE_SKIP_REASON,
+        )
+        for test_name in (
+            "test_cpu_backup_multi_device_mmap_restore",
+            "test_multi_device",
+        )
+        for hook_mode in ("preload", "torch")
+    ),
+    (
+        "test/test_examples.py::test_multi_device_torch_mode",
+        _MULTI_DEVICE_SKIP_REASON,
+    ),
+    *(
+        (f"test/test_examples.py::{test_name}", _XPU_SKIP_REASON)
+        for test_name in (
+            "test_disable_unsupported_xpu",
+            "test_resume_failure_injection_xpu",
+            "test_cleanup_failure_injection_xpu",
+            "test_free_failure_injection_xpu",
+            "test_multi_device_sync_xpu",
+            "test_memory_margin_unsupported_xpu",
+        )
+    ),
+)
+_EXPECTED_LUPINE_SKIPS = (
+    (
+        "test/test_examples.py::test_cpu_backup_preload_backend_from_env",
+        _LUPINE_SKIP_REASON,
+    ),
+    *(
+        (f"test/test_examples.py::test_disk_backup[{hook_mode}]", _LUPINE_SKIP_REASON)
+        for hook_mode in ("preload", "torch")
+    ),
+)
 _X86_VALIDATION_SCRIPT = r"""
 set -euxo pipefail
 python --version
@@ -51,9 +96,10 @@ python -m pip install --no-deps "/workspace/dist/torch_memory_saver-${TMS_RELEAS
 mkdir -p /validation/test
 cp -a /workspace/test/examples /validation/test/examples
 cp /workspace/test/test_configure_subprocess.py /workspace/test/test_examples.py /workspace/test/test_utils.py /validation/test/
+cp /workspace/.claude/skills/tms-publish-release/scripts/pytest_skip_gate.py /validation/pytest_skip_gate.py
 cd /validation
 python -c 'from pathlib import Path; import torch_memory_saver; path=Path(torch_memory_saver.__file__); print(path); assert "site-packages" in path.parts'
-CUDA_VISIBLE_DEVICES=0 timeout --signal=TERM --kill-after=30s 3600s python -m pytest test -vv -ra
+CUDA_VISIBLE_DEVICES=0 timeout --signal=TERM --kill-after=30s 3600s python -m pytest -p pytest_skip_gate test -vv -ra
 """.strip()
 _ARM_VALIDATION_SCRIPT = r"""
 set -euxo pipefail
@@ -64,6 +110,7 @@ python3 -m pip install --break-system-packages --no-deps "/workspace/dist/torch_
 mkdir -p /validation/test
 cp -a /workspace/test/examples /validation/test/examples
 cp /workspace/test/test_configure_subprocess.py /workspace/test/test_examples.py /workspace/test/test_utils.py /validation/test/
+cp /workspace/.claude/skills/tms-publish-release/scripts/pytest_skip_gate.py /validation/pytest_skip_gate.py
 cd /validation
 python3 - <<'PY'
 from pathlib import Path
@@ -101,7 +148,7 @@ PY
 CUDA_RUNTIME_LIB="$(python3 -c 'from pathlib import Path; import os, site; major=os.environ["TMS_CUDA_MAJOR"]; matches=[path for root in site.getsitepackages() for path in (Path(root) / "nvidia").glob(f"**/libcudart.so.{major}")]; assert matches, matches; print(":".join(sorted({str(path.parent) for path in matches})))')"
 export LD_LIBRARY_PATH="${CUDA_RUNTIME_LIB}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 echo "CUDA_RUNTIME_LIB=${CUDA_RUNTIME_LIB}"
-CUDA_VISIBLE_DEVICES=0 timeout --signal=TERM --kill-after=30s 3600s python3 -m pytest test -vv -ra
+CUDA_VISIBLE_DEVICES=0 timeout --signal=TERM --kill-after=30s 3600s python3 -m pytest -p pytest_skip_gate test -vv -ra
 """.strip()
 
 
@@ -119,6 +166,7 @@ class GpuValidationCase:
     image: str
     architecture: str
     cuda_major: str
+    expected_skips: tuple[tuple[str, str], ...]
     server_image: str | None = None
     test_environment: tuple[tuple[str, str], ...] = ()
 
@@ -129,18 +177,21 @@ _GPU_VALIDATION_CASES: tuple[GpuValidationCase, ...] = (
         image="docker.io/pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
         architecture="x86_64",
         cuda_major="12",
+        expected_skips=_EXPECTED_SINGLE_GPU_SKIPS,
     ),
     GpuValidationCase(
         name="x86_64-cuda13-gpu",
         image="docker.io/pytorch/pytorch:2.9.1-cuda13.0-cudnn9-runtime",
         architecture="x86_64",
         cuda_major="13",
+        expected_skips=_EXPECTED_SINGLE_GPU_SKIPS,
     ),
     GpuValidationCase(
         name="aarch64-cuda12-gpu",
         image="ghcr.io/lupinemachines/lupine-pytorch-worker@sha256:f152fbcb3e2eda5661abafdfb4f3024afe9b775eb702015b5df0527ca0b7f556",
         architecture="aarch64",
         cuda_major="12",
+        expected_skips=_EXPECTED_SINGLE_GPU_SKIPS + _EXPECTED_LUPINE_SKIPS,
         server_image="ghcr.io/lupinemachines/lupine-server@sha256:e6b1103392165e929ca7f4f910eeec9f0b0f7155c5ff65b7402ca083c6bf9d53",
         test_environment=(("TMS_TEST_LUPINE", "1"),),
     ),
@@ -149,6 +200,7 @@ _GPU_VALIDATION_CASES: tuple[GpuValidationCase, ...] = (
         image="ghcr.io/lupinemachines/lupine-pytorch-worker@sha256:a154530bfeed825e8c915be1b6129965f293dbf29ce4764441014dccf9c6c08a",
         architecture="aarch64",
         cuda_major="13",
+        expected_skips=_EXPECTED_SINGLE_GPU_SKIPS + _EXPECTED_LUPINE_SKIPS,
         server_image="ghcr.io/lupinemachines/lupine-server@sha256:f1d805e14e0b2da5d5912adeed72f3e1c7d0458082c3cbaf3ba9bb2346b869cd",
         test_environment=(("TMS_TEST_LUPINE", "1"),),
     ),
@@ -306,12 +358,16 @@ def _run_x86_case(*, config: GpuValidationConfig, case: GpuValidationCase) -> No
         _inspect_image(image=case.image, log_path=log_path)
         identity_logged = True
     finally:
+        primary_error = sys.exc_info()[1]
         if not identity_logged:
             _inspect_image(image=case.image, log_path=log_path, check=False)
-        _exec_command(
-            command=["docker", "container", "rm", "--force", container_name],
+        cleanup_errors = _run_cleanup_commands(
+            commands=[["docker", "container", "rm", "--force", container_name]],
             log_path=log_path,
-            check=False,
+        )
+        _raise_cleanup_errors_if_unmasked(
+            cleanup_errors=cleanup_errors,
+            primary_error=primary_error,
         )
 
 
@@ -404,25 +460,26 @@ def _run_lupine_case(*, config: GpuValidationConfig, case: GpuValidationCase) ->
             log_path=log_path,
         )
     finally:
+        primary_error = sys.exc_info()[1]
         if not worker_identity_logged:
             _inspect_image(image=case.image, log_path=log_path, check=False)
         if not server_identity_logged:
             _inspect_image(image=case.server_image, log_path=log_path, check=False)
-        for client_name in (smoke_client_name, validation_client_name):
-            _exec_command(
-                command=["docker", "container", "rm", "--force", client_name],
-                log_path=log_path,
-                check=False,
-            )
-        _exec_command(
-            command=["docker", "container", "rm", "--force", server_name],
+        cleanup_errors = _run_cleanup_commands(
+            commands=[
+                ["docker", "container", "logs", server_name],
+                *(
+                    ["docker", "container", "rm", "--force", client_name]
+                    for client_name in (smoke_client_name, validation_client_name)
+                ),
+                ["docker", "container", "rm", "--force", server_name],
+                ["docker", "network", "rm", network_name],
+            ],
             log_path=log_path,
-            check=False,
         )
-        _exec_command(
-            command=["docker", "network", "rm", network_name],
-            log_path=log_path,
-            check=False,
+        _raise_cleanup_errors_if_unmasked(
+            cleanup_errors=cleanup_errors,
+            primary_error=primary_error,
         )
 
 
@@ -439,6 +496,10 @@ def _environment_args(
             ("https_proxy", proxy_url),
             ("TMS_RELEASE_VERSION", config.expected_version),
             ("TMS_CUDA_MAJOR", case.cuda_major),
+            (
+                "TMS_EXPECTED_PYTEST_SKIPS",
+                json.dumps(dict(case.expected_skips), sort_keys=True),
+            ),
             *case.test_environment,
         )
         for argument in ("-e", f"{name}={value}")
@@ -485,6 +546,25 @@ def _inspect_image(*, image: str, log_path: Path, check: bool = True) -> None:
     except (OSError, subprocess.TimeoutExpired):
         if check:
             raise
+
+
+def _run_cleanup_commands(*, commands: list[list[str]], log_path: Path) -> list[str]:
+    errors: list[str] = []
+    for command in commands:
+        try:
+            _exec_command(command=command, log_path=log_path, check=False)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            errors.append(f"{shlex.join(command)}: {type(error).__name__}: {error}")
+    return errors
+
+
+def _raise_cleanup_errors_if_unmasked(
+    *,
+    cleanup_errors: list[str],
+    primary_error: BaseException | None,
+) -> None:
+    if cleanup_errors and primary_error is None:
+        raise RuntimeError(f"Validation cleanup failed: {cleanup_errors}")
 
 
 def _exec_command(

@@ -7,12 +7,16 @@
 from __future__ import annotations
 
 import ast
+import base64
+import csv
+import hashlib
 import re
 import shlex
 import subprocess
 import tarfile
 import zipfile
 from dataclasses import dataclass
+from io import StringIO
 from pathlib import Path
 from typing import Annotated
 from urllib.error import HTTPError, URLError
@@ -30,6 +34,7 @@ _CANONICAL_VERSION_PATTERN = re.compile(
 _ARCHITECTURES = ("x86_64", "aarch64")
 _ELF_MACHINE_BY_ARCHITECTURE = {"x86_64": 62, "aarch64": 183}
 _PYPI_RELEASE_URL = "https://pypi.org/pypi/torch-memory-saver/{version}/json"
+_COMMAND_TIMEOUT_SECONDS = 7200
 _EXPECTED_BINARY_NAMES = {
     f"torch_memory_saver_hook_mode_{hook_mode}{suffix}.abi3.so"
     for hook_mode in ("preload", "torch")
@@ -125,6 +130,33 @@ def _artifacts_command(
     typer.echo(f"Validated release artifacts for {expected_version}: {dist_dir}")
 
 
+@app.command("write-manifest")
+def _write_manifest_command(
+    dist_dir: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=False, dir_okay=True, readable=True),
+    ],
+    output: Annotated[Path, typer.Option(file_okay=True, dir_okay=False)],
+) -> None:
+    write_sha256_manifest(dist_dir=dist_dir, output=output)
+    typer.echo(f"Wrote release artifact manifest: {output}")
+
+
+@app.command("verify-manifest")
+def _verify_manifest_command(
+    dist_dir: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=False, dir_okay=True, readable=True),
+    ],
+    manifest: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=True, dir_okay=False, readable=True),
+    ],
+) -> None:
+    verify_sha256_manifest(dist_dir=dist_dir, manifest=manifest)
+    typer.echo(f"Verified release artifact manifest: {manifest}")
+
+
 @app.command("sdist")
 def _sdist_command(
     sdist_path: Annotated[
@@ -143,6 +175,25 @@ def _sdist_command(
         repo_root=repo_root,
     )
     typer.echo(f"Validated source distribution for {expected_version}: {sdist_path}")
+
+
+@app.command(
+    "run",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def _run_command(
+    context: typer.Context,
+    log_path: Annotated[Path, typer.Option(file_okay=True, dir_okay=False)],
+) -> None:
+    command = list(context.args)
+    if not command:
+        raise typer.BadParameter("A command is required after --")
+    try:
+        returncode = run_logged_command(command=command, log_path=log_path)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise click.ClickException(str(error)) from error
+    if returncode != 0:
+        raise typer.Exit(code=returncode)
 
 
 def read_setup_version(*, setup_py: Path) -> str:
@@ -279,7 +330,10 @@ def validate_wheel(
     expected_architecture: str,
 ) -> None:
     with zipfile.ZipFile(wheel_path) as wheel:
-        names = set(wheel.namelist())
+        file_names = [name for name in wheel.namelist() if not name.endswith("/")]
+        names = set(file_names)
+        if len(file_names) != len(names):
+            raise ValueError(f"Duplicate file entry in {wheel_path.name}")
         binary_paths = sorted(name for name in names if name.endswith(".so"))
         binary_path_by_name = {Path(name).name: name for name in binary_paths}
         binary_names = set(binary_path_by_name)
@@ -316,6 +370,11 @@ def validate_wheel(
 
         metadata_name = _find_one(names=names, suffix=".dist-info/METADATA")
         wheel_metadata_name = _find_one(names=names, suffix=".dist-info/WHEEL")
+        _validate_wheel_record(
+            wheel=wheel,
+            names=names,
+            wheel_name=wheel_path.name,
+        )
         metadata = wheel.read(metadata_name).decode()
         wheel_metadata = wheel.read(wheel_metadata_name).decode()
 
@@ -329,6 +388,128 @@ def validate_wheel(
         raise ValueError(
             f"Missing {expected_tag!r} in {wheel_path.name} WHEEL metadata"
         )
+
+
+def _validate_wheel_record(
+    *,
+    wheel: zipfile.ZipFile,
+    names: set[str],
+    wheel_name: str,
+) -> None:
+    record_name = _find_one(names=names, suffix=".dist-info/RECORD")
+    rows = list(csv.reader(StringIO(wheel.read(record_name).decode("utf-8"))))
+    entries: dict[str, tuple[str, str]] = {}
+    for row_number, row in enumerate(rows, start=1):
+        if len(row) != 3:
+            raise ValueError(
+                f"Invalid RECORD row {row_number} in {wheel_name}: {row!r}"
+            )
+        path, digest, size = row
+        if path in entries:
+            raise ValueError(f"Duplicate RECORD path in {wheel_name}: {path}")
+        entries[path] = (digest, size)
+
+    if set(entries) != names:
+        missing = sorted(names - set(entries))
+        unexpected = sorted(set(entries) - names)
+        raise ValueError(
+            f"RECORD member set mismatch in {wheel_name}: missing={missing}, "
+            f"unexpected={unexpected}"
+        )
+    for path, (digest, size) in entries.items():
+        if path == record_name:
+            if digest or size:
+                raise ValueError(
+                    f"RECORD self-entry must omit hash and size in {wheel_name}"
+                )
+            continue
+
+        content = wheel.read(path)
+        expected_digest = (
+            base64.urlsafe_b64encode(hashlib.sha256(content).digest())
+            .rstrip(b"=")
+            .decode("ascii")
+        )
+        if digest != f"sha256={expected_digest}":
+            raise ValueError(f"RECORD hash mismatch in {wheel_name}: {path}")
+        if size != str(len(content)):
+            raise ValueError(f"RECORD size mismatch in {wheel_name}: {path}")
+
+
+def write_sha256_manifest(*, dist_dir: Path, output: Path) -> None:
+    if output.parent.resolve() == dist_dir.resolve():
+        raise ValueError("Release artifact manifest must be outside the dist directory")
+    artifact_paths = sorted(path for path in dist_dir.iterdir() if path.is_file())
+    if not artifact_paths:
+        raise ValueError(f"No release artifacts found in {dist_dir}")
+    if output.exists():
+        raise ValueError(f"Refusing to overwrite release artifact manifest: {output}")
+
+    lines = [
+        f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}"
+        for path in artifact_paths
+    ]
+    output.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def verify_sha256_manifest(*, dist_dir: Path, manifest: Path) -> None:
+    entries: dict[str, str] = {}
+    for line_number, line in enumerate(
+        manifest.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        match = re.fullmatch(r"([0-9a-f]{64})  ([^/]+)", line)
+        if match is None:
+            raise ValueError(
+                f"Invalid SHA-256 manifest line {line_number} in {manifest}: {line!r}"
+            )
+        digest, name = match.groups()
+        if name in entries:
+            raise ValueError(f"Duplicate artifact in SHA-256 manifest: {name}")
+        entries[name] = digest
+
+    actual_paths = {path.name: path for path in dist_dir.iterdir() if path.is_file()}
+    if set(entries) != set(actual_paths):
+        missing = sorted(set(entries) - set(actual_paths))
+        unexpected = sorted(set(actual_paths) - set(entries))
+        raise ValueError(
+            f"SHA-256 manifest artifact set mismatch: missing={missing}, "
+            f"unexpected={unexpected}"
+        )
+    for name, expected_digest in entries.items():
+        actual_digest = hashlib.sha256(actual_paths[name].read_bytes()).hexdigest()
+        if actual_digest != expected_digest:
+            raise ValueError(
+                f"SHA-256 mismatch for {name}: expected {expected_digest}, "
+                f"found {actual_digest}"
+            )
+
+
+def run_logged_command(*, command: list[str], log_path: Path) -> int:
+    rendered_command = shlex.join(command)
+    typer.echo(f"EXEC: {rendered_command}", err=True)
+    with log_path.open(mode="a", encoding="utf-8") as output:
+        output.write(f"EXEC: {rendered_command}\n")
+        output.flush()
+        try:
+            result = subprocess.run(
+                command,
+                check=False,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=_COMMAND_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as error:
+            output.write(f"RESULT: timeout={error.timeout} seconds\n")
+            output.flush()
+            raise
+        except OSError as error:
+            output.write(f"RESULT: error={type(error).__name__}: {error}\n")
+            output.flush()
+            raise
+        output.write(f"RESULT: returncode={result.returncode}\n")
+        output.flush()
+    return result.returncode
 
 
 def validate_sdist(*, sdist_path: Path, expected_version: str, repo_root: Path) -> None:

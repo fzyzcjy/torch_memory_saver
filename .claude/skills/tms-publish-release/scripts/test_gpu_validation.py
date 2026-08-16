@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -22,7 +23,19 @@ def _load_gpu_validation_module() -> ModuleType:
     return module
 
 
+def _load_pytest_skip_gate_module() -> ModuleType:
+    module_path = Path(__file__).with_name("pytest_skip_gate.py")
+    spec = importlib.util.spec_from_file_location("pytest_skip_gate", module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 gpu_validation = _load_gpu_validation_module()
+pytest_skip_gate = _load_pytest_skip_gate_module()
 cli_runner = CliRunner()
 
 
@@ -76,6 +89,7 @@ class TestGpuValidationCommand:
                 case.image,
                 case.architecture,
                 case.cuda_major,
+                case.expected_skips,
                 case.server_image,
                 case.test_environment,
             )
@@ -86,6 +100,7 @@ class TestGpuValidationCommand:
                 "docker.io/pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
                 "x86_64",
                 "12",
+                gpu_validation._EXPECTED_SINGLE_GPU_SKIPS,
                 None,
                 (),
             ),
@@ -94,6 +109,7 @@ class TestGpuValidationCommand:
                 "docker.io/pytorch/pytorch:2.9.1-cuda13.0-cudnn9-runtime",
                 "x86_64",
                 "13",
+                gpu_validation._EXPECTED_SINGLE_GPU_SKIPS,
                 None,
                 (),
             ),
@@ -102,6 +118,8 @@ class TestGpuValidationCommand:
                 "ghcr.io/lupinemachines/lupine-pytorch-worker@sha256:f152fbcb3e2eda5661abafdfb4f3024afe9b775eb702015b5df0527ca0b7f556",
                 "aarch64",
                 "12",
+                gpu_validation._EXPECTED_SINGLE_GPU_SKIPS
+                + gpu_validation._EXPECTED_LUPINE_SKIPS,
                 "ghcr.io/lupinemachines/lupine-server@sha256:e6b1103392165e929ca7f4f910eeec9f0b0f7155c5ff65b7402ca083c6bf9d53",
                 (("TMS_TEST_LUPINE", "1"),),
             ),
@@ -110,6 +128,8 @@ class TestGpuValidationCommand:
                 "ghcr.io/lupinemachines/lupine-pytorch-worker@sha256:a154530bfeed825e8c915be1b6129965f293dbf29ce4764441014dccf9c6c08a",
                 "aarch64",
                 "13",
+                gpu_validation._EXPECTED_SINGLE_GPU_SKIPS
+                + gpu_validation._EXPECTED_LUPINE_SKIPS,
                 "ghcr.io/lupinemachines/lupine-server@sha256:f1d805e14e0b2da5d5912adeed72f3e1c7d0458082c3cbaf3ba9bb2346b869cd",
                 (("TMS_TEST_LUPINE", "1"),),
             ),
@@ -132,7 +152,7 @@ class TestGpuValidationCommand:
         assert "test_configure_subprocess.py" in script
         assert "test_examples.py" in script
         assert "test_utils.py" in script
-        assert "pytest test -vv -ra" in script
+        assert "pytest -p pytest_skip_gate test -vv -ra" in script
         assert "timeout --signal=TERM --kill-after=30s 3600s" in script
         assert "torch.cuda.is_available()" in script
         assert "get_device_name(0)" in script
@@ -140,6 +160,7 @@ class TestGpuValidationCommand:
         assert "site-packages" in script
         assert "/workspace/scripts" not in script
         assert "test_merge_cuda_wheels.py" not in script
+        assert "pytest_skip_gate.py /validation/pytest_skip_gate.py" in script
 
     def test_gpu_scripts_do_not_deselect_runtime_tests(self) -> None:
         """Runtime-specific skips remain visible in pytest output."""
@@ -158,8 +179,7 @@ class TestGpuValidationCommand:
             for node in tree.body
             if isinstance(node, ast.FunctionDef)
             and any(
-                isinstance(decorator, ast.Name)
-                and decorator.id == "_skip_on_lupine"
+                isinstance(decorator, ast.Name) and decorator.id == "_skip_on_lupine"
                 for decorator in node.decorator_list
             )
         }
@@ -169,6 +189,41 @@ class TestGpuValidationCommand:
             "test_cpu_backup_preload_backend_from_env",
             "test_disk_backup",
         }
+
+    def test_skip_gate_accepts_only_the_exact_node_and_reason_map(self) -> None:
+        """The structured skip gate rejects missing, extra, or changed skips."""
+
+        expected = {"test/example.py::test_case": "expected reason"}
+
+        assert (
+            pytest_skip_gate._skip_mismatch(
+                expected=expected,
+                actual=expected,
+                duplicates=[],
+            )
+            is None
+        )
+        for actual in (
+            {},
+            {**expected, "test/example.py::test_extra": "extra reason"},
+            {"test/example.py::test_case": "changed reason"},
+        ):
+            assert (
+                pytest_skip_gate._skip_mismatch(
+                    expected=expected,
+                    actual=actual,
+                    duplicates=[],
+                )
+                is not None
+            )
+        assert (
+            pytest_skip_gate._skip_mismatch(
+                expected=expected,
+                actual=expected,
+                duplicates=["test/example.py::test_case"],
+            )
+            is not None
+        )
 
     def test_arm_script_requires_real_aarch64_gpu_execution(self) -> None:
         """The ARM gate proves architecture, CUDA major, ELF type, and GPU access."""
@@ -342,6 +397,11 @@ class TestGpuValidationCommand:
         assert f"{config.release_root}:/workspace:ro" in run_command
         assert f"TMS_CUDA_MAJOR={case.cuda_major}" in run_command
         assert "TMS_TEST_LUPINE=1" not in run_command
+        assert (
+            "TMS_EXPECTED_PYTEST_SKIPS="
+            + json.dumps(dict(case.expected_skips), sort_keys=True)
+            in run_command
+        )
         assert commands[1][0][:4] == ["docker", "image", "inspect", case.image]
         assert "org.opencontainers.image.revision" in commands[1][0][-1]
         assert commands[-1][0][:4] == ["docker", "container", "rm", "--force"]
@@ -459,6 +519,11 @@ class TestGpuValidationCommand:
         assert f"{config.release_root}:/workspace:ro" in client_commands[1]
         assert f"TMS_CUDA_MAJOR={case.cuda_major}" in client_commands[1]
         assert "TMS_TEST_LUPINE=1" in client_commands[1]
+        assert (
+            "TMS_EXPECTED_PYTEST_SKIPS="
+            + json.dumps(dict(case.expected_skips), sort_keys=True)
+            in client_commands[1]
+        )
         assert "http_proxy=http://host.docker.internal:7890" in client_commands[1]
         assert "https_proxy=http://host.docker.internal:7890" in client_commands[1]
         assert client_commands[0][-4] == case.image
@@ -578,24 +643,103 @@ class TestGpuValidationCommand:
             config=config,
             case=case,
         )
-        assert [entry[0][:4] for entry in commands[-4:]] == [
+        assert [entry[0][:4] for entry in commands[-5:]] == [
+            ["docker", "container", "logs", f"{resource_prefix}-server"],
             ["docker", "container", "rm", "--force"],
             ["docker", "container", "rm", "--force"],
             ["docker", "container", "rm", "--force"],
             ["docker", "network", "rm", commands[-1][0][3]],
         ]
-        assert [entry[0][-1] for entry in commands[-4:]] == [
+        assert [entry[0][-1] for entry in commands[-5:]] == [
+            f"{resource_prefix}-server",
             f"{resource_prefix}-smoke",
             f"{resource_prefix}-validation",
             f"{resource_prefix}-server",
             f"{resource_prefix}-network",
         ]
-        assert [entry[2] for entry in commands[-4:]] == [
+        assert [entry[2] for entry in commands[-5:]] == [
+            False,
             False,
             False,
             False,
             False,
         ]
+
+    def test_cleanup_timeout_preserves_primary_error_and_continues(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """One cleanup timeout cannot mask failure or stop later cleanup."""
+
+        config = _write_config_with_wheels(tmp_path=tmp_path)
+        case = gpu_validation._GPU_VALIDATION_CASES[3]
+        cleanup_names: list[str] = []
+
+        def fail_validation_and_first_cleanup(
+            *,
+            command: list[str],
+            log_path: Path,
+            check: bool = True,
+        ) -> subprocess.CompletedProcess[str]:
+            if (
+                command[:3] == ["docker", "run", "--rm"]
+                and command[-1] == gpu_validation._ARM_VALIDATION_SCRIPT
+            ):
+                raise subprocess.CalledProcessError(returncode=23, cmd=command)
+            if command[:4] == ["docker", "container", "rm", "--force"]:
+                cleanup_names.append(command[-1])
+                if len(cleanup_names) == 1:
+                    raise subprocess.TimeoutExpired(command, timeout=1)
+            if command[:3] == ["docker", "network", "rm"]:
+                cleanup_names.append(command[-1])
+            return subprocess.CompletedProcess(args=command, returncode=0)
+
+        monkeypatch.setattr(
+            gpu_validation,
+            "_exec_command",
+            fail_validation_and_first_cleanup,
+        )
+
+        with pytest.raises(subprocess.CalledProcessError) as error:
+            gpu_validation._run_lupine_case(config=config, case=case)
+
+        resource_prefix = gpu_validation._resource_prefix(
+            config=config,
+            case=case,
+        )
+        assert error.value.returncode == 23
+        assert cleanup_names == [
+            f"{resource_prefix}-smoke",
+            f"{resource_prefix}-validation",
+            f"{resource_prefix}-server",
+            f"{resource_prefix}-network",
+        ]
+
+    def test_cleanup_timeout_fails_an_otherwise_successful_case(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A cleanup timeout remains visible when validation itself succeeded."""
+
+        config = _write_config_with_wheels(tmp_path=tmp_path)
+        case = gpu_validation._GPU_VALIDATION_CASES[0]
+
+        def timeout_cleanup(
+            *,
+            command: list[str],
+            log_path: Path,
+            check: bool = True,
+        ) -> subprocess.CompletedProcess[str]:
+            if command[:4] == ["docker", "container", "rm", "--force"]:
+                raise subprocess.TimeoutExpired(command, timeout=1)
+            return subprocess.CompletedProcess(args=command, returncode=0)
+
+        monkeypatch.setattr(gpu_validation, "_exec_command", timeout_cleanup)
+
+        with pytest.raises(RuntimeError, match="Validation cleanup failed"):
+            gpu_validation._run_x86_case(config=config, case=case)
 
     def test_exec_command_applies_orchestration_timeout(
         self,
