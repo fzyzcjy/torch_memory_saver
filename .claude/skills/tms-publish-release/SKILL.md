@@ -466,5 +466,6 @@ TMS_PROXY_URL=http://127.0.0.1:7890 \
 | `SKIP_GATE_RESULT=fail` | A skip is missing, additional, duplicated, or has a changed reason | Inspect `SKIP_GATE_ACTUAL`; update code or the reviewed matrix contract instead of silently accepting it |
 | Cleanup raises after a passing cell | Docker cleanup timed out or could not start | Inspect the complete cell log; the harness attempted every cleanup command and preserved any earlier validation error |
 | Manifest verification fails | An artifact changed or the file set differs after human review | Stop and start a new build and review run; never regenerate the approved manifest |
+| Post-release verification reports `jq: command not found` | The workstation lacks the host-side JSON verifier | Install `jq` with `sudo apt-get install -y jq`; the script checks every host dependency before network access |
 | `dist/` has extra wheels | Stale or partial build output | Stop and start a new run directory; never repair or reuse a release tree |
 | PyPI upload reports an existing filename | Version or artifact was already published | Stop; never use `--skip-existing` or overwrite a release |

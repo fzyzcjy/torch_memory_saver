@@ -56,6 +56,20 @@ def test_published_release_script_matches_approved_remote_artifacts() -> None:
     assert 'echo "RESULT: returncode=$status"' in source
 
 
+def test_published_release_script_checks_each_host_dependency() -> None:
+    """A missing non-final host command fails during verifier preflight."""
+
+    source = (
+        Path(__file__)
+        .with_name("verify_published_release.sh")
+        .read_text(encoding="utf-8")
+    )
+
+    assert "for executable in curl jq docker; do" in source
+    assert 'command -v "$executable"' in source
+    assert "command -v curl jq docker" not in source
+
+
 def test_every_repository_shell_script_enables_strict_mode_first() -> None:
     """Every shell script enables strict tracing before its first command."""
 
