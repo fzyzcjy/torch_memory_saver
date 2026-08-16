@@ -101,10 +101,7 @@ PY
 CUDA_RUNTIME_LIB="$(python3 -c 'from pathlib import Path; import os, site; major=os.environ["TMS_CUDA_MAJOR"]; matches=[path for root in site.getsitepackages() for path in (Path(root) / "nvidia").glob(f"**/libcudart.so.{major}")]; assert matches, matches; print(":".join(sorted({str(path.parent) for path in matches})))')"
 export LD_LIBRARY_PATH="${CUDA_RUNTIME_LIB}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 echo "CUDA_RUNTIME_LIB=${CUDA_RUNTIME_LIB}"
-CUDA_VISIBLE_DEVICES=0 timeout --signal=TERM --kill-after=30s 3600s python3 -m pytest test -vv -ra \
-  --deselect 'test/test_examples.py::test_cpu_backup_preload_backend_from_env' \
-  --deselect 'test/test_examples.py::test_disk_backup[preload]' \
-  --deselect 'test/test_examples.py::test_disk_backup[torch]'
+CUDA_VISIBLE_DEVICES=0 timeout --signal=TERM --kill-after=30s 3600s python3 -m pytest test -vv -ra
 """.strip()
 
 
@@ -123,6 +120,7 @@ class GpuValidationCase:
     architecture: str
     cuda_major: str
     server_image: str | None = None
+    test_environment: tuple[tuple[str, str], ...] = ()
 
 
 _GPU_VALIDATION_CASES: tuple[GpuValidationCase, ...] = (
@@ -144,6 +142,7 @@ _GPU_VALIDATION_CASES: tuple[GpuValidationCase, ...] = (
         architecture="aarch64",
         cuda_major="12",
         server_image="ghcr.io/lupinemachines/lupine-server@sha256:e6b1103392165e929ca7f4f910eeec9f0b0f7155c5ff65b7402ca083c6bf9d53",
+        test_environment=(("TMS_TEST_LUPINE", "1"),),
     ),
     GpuValidationCase(
         name="aarch64-cuda13-gpu",
@@ -151,6 +150,7 @@ _GPU_VALIDATION_CASES: tuple[GpuValidationCase, ...] = (
         architecture="aarch64",
         cuda_major="13",
         server_image="ghcr.io/lupinemachines/lupine-server@sha256:f1d805e14e0b2da5d5912adeed72f3e1c7d0458082c3cbaf3ba9bb2346b869cd",
+        test_environment=(("TMS_TEST_LUPINE", "1"),),
     ),
 )
 
@@ -439,6 +439,7 @@ def _environment_args(
             ("https_proxy", proxy_url),
             ("TMS_RELEASE_VERSION", config.expected_version),
             ("TMS_CUDA_MAJOR", case.cuda_major),
+            *case.test_environment,
         )
         for argument in ("-e", f"{name}={value}")
     ]

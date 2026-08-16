@@ -2,6 +2,7 @@ import pytest
 from contextlib import nullcontext
 
 import multiprocessing
+import os
 import sys
 import traceback
 import torch
@@ -25,10 +26,15 @@ from examples import (
 
 # XPU only supports hook_mode='torch'
 _IS_XPU = is_xpu()
+_IS_LUPINE = os.environ.get("TMS_TEST_LUPINE") == "1"
 _HOOK_MODES = ["torch"] if _IS_XPU else ["preload", "torch"]
 
 # Skip reason for tests that exercise CUDA/HIP-only paths on XPU.
 _skip_on_xpu = pytest.mark.skipif(_IS_XPU, reason="CUDA/HIP-only path, not supported on XPU")
+_skip_on_lupine = pytest.mark.skipif(
+    _IS_LUPINE,
+    reason="Lupine GPU-over-IP does not preserve native pinned-host or process RSS semantics",
+)
 _xpu_only = pytest.mark.skipif(not _IS_XPU, reason="XPU-specific path")
 _device_module = torch.xpu if _IS_XPU else torch.cuda
 _multi_device_only = pytest.mark.skipif(
@@ -85,6 +91,7 @@ def test_cpu_backup_backend_from_env(hook_mode):
 
 
 @_skip_on_xpu
+@_skip_on_lupine
 @pytest.mark.skipif(
     not torch.cuda.is_available()
     or torch.version.hip is not None
@@ -100,6 +107,7 @@ def test_cpu_backup_preload_backend_from_env():
         _test_core(cpu_backup.run_preload_backend_from_env, hook_mode="preload")
 
 
+@_skip_on_lupine
 @pytest.mark.parametrize("hook_mode", _HOOK_MODES)
 def test_disk_backup(hook_mode):
     _test_core(disk_backup.run, hook_mode=hook_mode)

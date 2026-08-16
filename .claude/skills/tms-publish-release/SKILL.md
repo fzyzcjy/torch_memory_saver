@@ -211,10 +211,10 @@ Source mount: release root at /workspace, read-only
 Install root: final wheel into site-packages or dist-packages
 Test root: /validation, outside the source checkout
 x86_64 test suite: full single-GPU runtime pytest
-ARM64 test suite: runtime pytest with the exact Lupine deselections below
-Lupine deselection 1: test/test_examples.py::test_cpu_backup_preload_backend_from_env
-Lupine deselection 2: test/test_examples.py::test_disk_backup[preload]
-Lupine deselection 3: test/test_examples.py::test_disk_backup[torch]
+ARM64 test suite: full runtime pytest with in-test Lupine skip markers
+Lupine signal: TMS_TEST_LUPINE=1 in ARM64 validation containers only
+Lupine skip 1: test_cpu_backup_preload_backend_from_env
+Lupine skip 2: test_disk_backup, including both hook-mode parameters
 CUDA major: matches the matrix cell
 CUDA availability: torch.cuda.is_available() is true
 GPU identity: NVIDIA GeForce RTX 4090 D
@@ -224,9 +224,10 @@ Binary architecture: every loaded ELF machine matches the matrix cell
 Inventory gate: every repository test_*.py classified as runtime or build tooling
 Build-tool UT: build phase only
 Success: zero failures in all four cells
-Allowed skips: single-GPU multi-device cases and XPU-only cases
+Allowed skips: documented Lupine host-memory cases, single-GPU multi-device cases, XPU-only cases
 Skip review: inspect every reason
-Additional skip or deselection: forbidden
+CLI deselection: forbidden
+Additional skip: forbidden
 Evidence: image identity, environment, commands, installed paths, binaries, pytest output
 Cleanup: named clients, servers, containers, and private networks removed on success or failure
 ```
@@ -245,6 +246,7 @@ Preinstalled: ARM Python, PyTorch, CUDA user-space libraries, CUDA/NVML shims
 Added test dependencies: pinned binary NumPy, pytest, nvidia-ml-py wheels
 Execution: real ARM64 Python, PyTorch, and TMS wheel under QEMU
 GPU path: CUDA driver and NVML calls forwarded to the physical 4090D
+Test signal: TMS_TEST_LUPINE=1
 Qualification: ARM user-space GPU behavior through Lupine
 Not qualified: ARM NVIDIA kernel driver or native ARM PCIe path
 Disk-backup boundary: Lupine protects pinned host mirrors read-only, so kernel pread returns EFAULT

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import importlib.util
 import subprocess
 import sys
@@ -76,6 +77,7 @@ class TestGpuValidationCommand:
                 case.architecture,
                 case.cuda_major,
                 case.server_image,
+                case.test_environment,
             )
             for case in gpu_validation._GPU_VALIDATION_CASES
         ] == [
@@ -85,6 +87,7 @@ class TestGpuValidationCommand:
                 "x86_64",
                 "12",
                 None,
+                (),
             ),
             (
                 "x86_64-cuda13-gpu",
@@ -92,6 +95,7 @@ class TestGpuValidationCommand:
                 "x86_64",
                 "13",
                 None,
+                (),
             ),
             (
                 "aarch64-cuda12-gpu",
@@ -99,6 +103,7 @@ class TestGpuValidationCommand:
                 "aarch64",
                 "12",
                 "ghcr.io/lupinemachines/lupine-server@sha256:e6b1103392165e929ca7f4f910eeec9f0b0f7155c5ff65b7402ca083c6bf9d53",
+                (("TMS_TEST_LUPINE", "1"),),
             ),
             (
                 "aarch64-cuda13-gpu",
@@ -106,6 +111,7 @@ class TestGpuValidationCommand:
                 "aarch64",
                 "13",
                 "ghcr.io/lupinemachines/lupine-server@sha256:f1d805e14e0b2da5d5912adeed72f3e1c7d0458082c3cbaf3ba9bb2346b869cd",
+                (("TMS_TEST_LUPINE", "1"),),
             ),
         ]
 
@@ -135,23 +141,34 @@ class TestGpuValidationCommand:
         assert "/workspace/scripts" not in script
         assert "test_merge_cuda_wheels.py" not in script
 
-    def test_x86_script_runs_every_runtime_test(self) -> None:
-        """Direct NVIDIA validation does not exclude any runtime test."""
+    def test_gpu_scripts_do_not_deselect_runtime_tests(self) -> None:
+        """Runtime-specific skips remain visible in pytest output."""
 
         assert "--deselect" not in gpu_validation._X86_VALIDATION_SCRIPT
+        assert "--deselect" not in gpu_validation._ARM_VALIDATION_SCRIPT
 
-    def test_arm_script_excludes_only_lupine_incompatible_tests(self) -> None:
-        """Lupine omits only tests invalidated by its host-memory emulation."""
+    def test_lupine_runtime_tests_declare_exact_skip_markers(self) -> None:
+        """Only the two host-memory tests opt out under Lupine."""
 
-        script = gpu_validation._ARM_VALIDATION_SCRIPT
+        test_path = Path(__file__).parents[4] / "test" / "test_examples.py"
+        source = test_path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        marked_tests = {
+            node.name
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and any(
+                isinstance(decorator, ast.Name)
+                and decorator.id == "_skip_on_lupine"
+                for decorator in node.decorator_list
+            )
+        }
 
-        assert script.count("--deselect") == 3
-        assert (
-            "--deselect 'test/test_examples.py::test_cpu_backup_preload_backend_from_env'"
-            in script
-        )
-        assert "--deselect 'test/test_examples.py::test_disk_backup[preload]'" in script
-        assert "--deselect 'test/test_examples.py::test_disk_backup[torch]'" in script
+        assert 'os.environ.get("TMS_TEST_LUPINE") == "1"' in source
+        assert marked_tests == {
+            "test_cpu_backup_preload_backend_from_env",
+            "test_disk_backup",
+        }
 
     def test_arm_script_requires_real_aarch64_gpu_execution(self) -> None:
         """The ARM gate proves architecture, CUDA major, ELF type, and GPU access."""
@@ -324,6 +341,7 @@ class TestGpuValidationCommand:
         ]
         assert f"{config.release_root}:/workspace:ro" in run_command
         assert f"TMS_CUDA_MAJOR={case.cuda_major}" in run_command
+        assert "TMS_TEST_LUPINE=1" not in run_command
         assert commands[1][0][:4] == ["docker", "image", "inspect", case.image]
         assert "org.opencontainers.image.revision" in commands[1][0][-1]
         assert commands[-1][0][:4] == ["docker", "container", "rm", "--force"]
@@ -440,6 +458,7 @@ class TestGpuValidationCommand:
         assert f"{config.release_root}:/workspace:ro" not in client_commands[0]
         assert f"{config.release_root}:/workspace:ro" in client_commands[1]
         assert f"TMS_CUDA_MAJOR={case.cuda_major}" in client_commands[1]
+        assert "TMS_TEST_LUPINE=1" in client_commands[1]
         assert "http_proxy=http://host.docker.internal:7890" in client_commands[1]
         assert "https_proxy=http://host.docker.internal:7890" in client_commands[1]
         assert client_commands[0][-4] == case.image
