@@ -92,14 +92,12 @@ def _pypi_command(
 def _publish_preflight_command(
     expected_version: Annotated[str, typer.Option()],
     remote: Annotated[str, typer.Option()] = "origin",
-    repository: Annotated[str, typer.Option()] = "fzyzcjy/torch_memory_saver",
 ) -> None:
     validate_canonical_version(version=expected_version)
     try:
         collisions = find_publish_collisions(
             version=expected_version,
             remote=remote,
-            repository=repository,
         )
     except RuntimeError as error:
         raise click.ClickException(str(error)) from error
@@ -109,7 +107,7 @@ def _publish_preflight_command(
             param_hint="--expected-version",
         )
     typer.echo(
-        f"Confirmed publish identity is unused on PyPI, {remote}, and GitHub: {expected_version}"
+        f"Confirmed publish identity is unused on PyPI and {remote}: {expected_version}"
     )
 
 
@@ -130,7 +128,6 @@ def _pre_upload_command(
         typer.Option(exists=True, file_okay=False, dir_okay=True, readable=True),
     ] = Path("."),
     remote: Annotated[str, typer.Option()] = "origin",
-    repository: Annotated[str, typer.Option()] = "fzyzcjy/torch_memory_saver",
 ) -> None:
     try:
         run_pre_upload_checks(
@@ -140,7 +137,6 @@ def _pre_upload_command(
             log_path=log_path,
             repo_root=repo_root,
             remote=remote,
-            repository=repository,
         )
     except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as error:
         raise click.ClickException(str(error)) from error
@@ -286,14 +282,12 @@ def pypi_version_exists(*, version: str) -> bool:
         ) from error
 
 
-def find_publish_collisions(*, version: str, remote: str, repository: str) -> list[str]:
+def find_publish_collisions(*, version: str, remote: str) -> list[str]:
     collisions: list[str] = []
     if pypi_version_exists(version=version):
         collisions.append(f"PyPI version {version}")
     if remote_tag_exists(version=version, remote=remote):
         collisions.append(f"{remote} tag v{version}")
-    if github_release_exists(version=version, repository=repository):
-        collisions.append(f"GitHub Release v{version}")
     return collisions
 
 
@@ -314,24 +308,6 @@ def remote_tag_exists(*, version: str, remote: str) -> bool:
         return False
     raise RuntimeError(
         f"Could not check {remote} for tag v{version}: {result.stderr.strip()}"
-    )
-
-
-def github_release_exists(*, version: str, repository: str) -> bool:
-    result = _exec_command(
-        command=[
-            "gh",
-            "api",
-            "--silent",
-            f"repos/{repository}/releases/tags/v{version}",
-        ]
-    )
-    if result.returncode == 0:
-        return True
-    if result.returncode == 1 and "HTTP 404" in result.stderr:
-        return False
-    raise RuntimeError(
-        f"Could not check {repository} for GitHub Release v{version}: {result.stderr.strip()}"
     )
 
 
@@ -566,7 +542,6 @@ def run_pre_upload_checks(
     log_path: Path,
     repo_root: Path,
     remote: str,
-    repository: str,
 ) -> None:
     validate_canonical_version(version=expected_version)
     git_script = r"""
@@ -634,7 +609,6 @@ test "$(git -C "$2" rev-parse HEAD)" = "$(git -C "$2" rev-parse "$1/master")"
         if collisions := find_publish_collisions(
             version=expected_version,
             remote=remote,
-            repository=repository,
         ):
             raise ValueError(
                 f"Release identity already exists: {', '.join(collisions)}"
@@ -642,7 +616,7 @@ test "$(git -C "$2" rev-parse HEAD)" = "$(git -C "$2" rev-parse "$1/master")"
 
     _run_logged_validation(
         name="publish-preflight",
-        arguments=[expected_version, remote, repository],
+        arguments=[expected_version, remote],
         log_path=log_path,
         validation=validate_namespaces,
     )

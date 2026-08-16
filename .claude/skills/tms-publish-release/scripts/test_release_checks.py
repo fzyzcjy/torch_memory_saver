@@ -148,12 +148,12 @@ class TestPublishPreflight:
     def test_publish_preflight_accepts_unused_identity(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Publication can proceed only when all three namespaces are unused."""
+        """Publication can proceed only when package and tag identities are unused."""
 
         monkeypatch.setattr(
             release_checks,
             "find_publish_collisions",
-            lambda *, version, remote, repository: [],
+            lambda *, version, remote: [],
         )
 
         result = cli_runner.invoke(
@@ -162,12 +162,12 @@ class TestPublishPreflight:
         )
 
         assert result.exit_code == 0
-        assert "PyPI, origin, and GitHub: 0.0.10b1" in result.stdout
+        assert "PyPI and origin: 0.0.10b1" in result.stdout
 
     def test_publish_preflight_reports_every_existing_identity(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Any existing package, tag, or release blocks publication."""
+        """Any existing package or tag blocks publication."""
 
         monkeypatch.setattr(
             release_checks,
@@ -179,12 +179,6 @@ class TestPublishPreflight:
             "remote_tag_exists",
             lambda *, version, remote: True,
         )
-        monkeypatch.setattr(
-            release_checks,
-            "github_release_exists",
-            lambda *, version, repository: True,
-        )
-
         result = cli_runner.invoke(
             release_checks.app,
             ["publish-preflight", "--expected-version", "0.0.10b1"],
@@ -196,7 +190,6 @@ class TestPublishPreflight:
         message = str(result.exception.__context__)
         assert "PyPI version 0.0.10b1" in message
         assert "origin tag v0.0.10b1" in message
-        assert "GitHub Release v0.0.10b1" in message
 
     @pytest.mark.parametrize(
         ("returncode", "expected"),
@@ -224,37 +217,6 @@ class TestPublishPreflight:
             release_checks.remote_tag_exists(version="0.0.10b1", remote="origin")
             is expected
         )
-
-    @pytest.mark.parametrize(
-        ("returncode", "stderr", "expected"),
-        [(0, "", True), (1, "gh: Not Found (HTTP 404)", False)],
-    )
-    def test_github_release_exit_codes_are_classified(
-        self,
-        returncode: int,
-        stderr: str,
-        expected: bool,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """GitHub distinguishes an existing release from an absent tag release."""
-
-        monkeypatch.setattr(
-            release_checks,
-            "_exec_command",
-            lambda *, command: release_checks.CommandResult(
-                returncode=returncode,
-                stdout="",
-                stderr=stderr,
-            ),
-        )
-
-        assert (
-            release_checks.github_release_exists(
-                version="0.0.10b1", repository="fzyzcjy/torch_memory_saver"
-            )
-            is expected
-        )
-
 
 class TestCommandLogging:
     def test_run_command_records_command_output_and_result(
@@ -408,7 +370,7 @@ class TestPreUpload:
         monkeypatch.setattr(
             release_checks,
             "find_publish_collisions",
-            lambda *, version, remote, repository: [],
+            lambda *, version, remote: [],
         )
         log_path = tmp_path / "publish-recheck.log"
 
@@ -419,7 +381,6 @@ class TestPreUpload:
             log_path=log_path,
             repo_root=repo_root,
             remote="origin",
-            repository="fzyzcjy/torch_memory_saver",
         )
 
         assert commands[0][:2] == ["bash", "-lc"]
@@ -454,7 +415,7 @@ class TestPreUpload:
         monkeypatch.setattr(
             release_checks,
             "find_publish_collisions",
-            lambda *, version, remote, repository: ["PyPI version 0.0.10b1"],
+            lambda *, version, remote: ["PyPI version 0.0.10b1"],
         )
         log_path = tmp_path / "publish-recheck.log"
 
@@ -466,7 +427,6 @@ class TestPreUpload:
                 log_path=log_path,
                 repo_root=repo_root,
                 remote="origin",
-                repository="fzyzcjy/torch_memory_saver",
             )
 
         evidence = log_path.read_text(encoding="utf-8")

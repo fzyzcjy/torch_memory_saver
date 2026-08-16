@@ -18,6 +18,7 @@ description: Use when preparing, building, validating, publishing, or verifying 
 - Build and test on `tom-workstation`.
 - Publish from the local controller.
 - Never persist PyPI credentials on the GPU host.
+- Never create a GitHub Release. Publish only the PyPI distributions and an annotated Git tag.
 - Treat PyPI upload and Git tag push as irreversible.
 - Complete the Section 8 confirmation gate before either action.
 
@@ -131,9 +132,10 @@ docker run --rm --platform linux/arm64 alpine:3.22 uname -m'
 | `.claude/skills/tms-publish-release/scripts/release_checks.py` | Version, namespace, artifact, manifest, one-command pre-upload, and append-only command-log gates | No |
 | `.claude/skills/tms-publish-release/scripts/gpu_validation.py` | Four-cell fresh-container GPU runtime harness with exact skip enforcement | Creates only temporary validation resources |
 | `.claude/skills/tms-publish-release/scripts/pytest_skip_gate.py` | Exact pytest skipped-node and reason validator loaded by the harness | No |
-| `.claude/skills/tms-publish-release/scripts/verify_published_release.sh` | Auditable post-release PyPI, GitHub, CUDA 12, and CUDA 13 verification | Creates only temporary validation containers |
+| `.claude/skills/tms-publish-release/scripts/verify_published_release.sh` | Auditable post-release PyPI, CUDA 12, and CUDA 13 verification | Creates only temporary validation containers |
 
-- Keep upload, tag creation, and GitHub Release creation outside every release script.
+- Keep upload and tag creation outside every release script.
+- Do not create, query, attach artifacts to, or require a GitHub Release.
 - Use `sdist` only for focused diagnostics.
 - Use `artifacts` for the canonical release workflow after all three distributions exist.
 
@@ -352,7 +354,7 @@ GPU matrix row: architecture, CUDA major, image digest, PyTorch/CUDA/GPU identit
 GPU matrix result: pytest summary, every skip reason, terminal RESULT, log link
 Lupine boundary: TMS_TEST_LUPINE signal, exact skipped tests, qualification limit
 Cleanup: validation containers, server, and network removal evidence
-Safety: PyPI upload, release tag, and GitHub Release not performed
+Safety: PyPI upload and release tag not performed; GitHub Release creation forbidden
 Human review: pending
 ```
 
@@ -382,14 +384,13 @@ UV_CACHE_DIR="$TMS_LOCAL_ARTIFACTS/uv-cache" uv run --script "$TMS_RELEASE_CHECK
   --expected-version "$TMS_RELEASE_VERSION" \
   --log-path "$TMS_LOCAL_ARTIFACTS/publish-recheck.log" \
   --repo-root . \
-  --remote origin \
-  --repository fzyzcjy/torch_memory_saver
+  --remote origin
 ```
 
-- The command fetches `origin/master`; requires a clean tree and `HEAD == origin/master`; verifies the approved manifest; reruns the complete artifact and Twine gates; and rejects existing PyPI, tag, or GitHub Release identities.
+- The command fetches `origin/master`; requires a clean tree and `HEAD == origin/master`; verifies the approved manifest; reruns the complete artifact and Twine gates; and rejects existing PyPI or tag identities.
 - Require the verified manifest to equal the three hashes approved in the Section 7 report.
 - Upload only the files covered by that manifest.
-- Treat an existing PyPI version, remote `v<VERSION>` tag, or GitHub Release as a hard failure.
+- Treat an existing PyPI version or remote `v<VERSION>` tag as a hard failure.
 - Treat network and authentication errors as hard failures.
 - Upload without `--skip-existing`; a collision is a hard failure:
 
@@ -400,21 +401,15 @@ UV_CACHE_DIR="$TMS_LOCAL_ARTIFACTS/uv-cache" uv run --no-project --with twine \
 ```
 
 - Poll PyPI with bounded waits until all three files appear under the exact version.
-- Create an annotated tag and prerelease only after PyPI confirms the version:
+- Create and push an annotated tag only after PyPI confirms the version:
 
 ```bash
 set -euxo pipefail
 git tag -a "v$TMS_RELEASE_VERSION" -m "Release $TMS_RELEASE_VERSION" "$(git rev-parse HEAD)"
 git push origin "v$TMS_RELEASE_VERSION"
-gh release create "v$TMS_RELEASE_VERSION" \
-  --repo fzyzcjy/torch_memory_saver \
-  --verify-tag \
-  --prerelease \
-  --generate-notes \
-  "$TMS_LOCAL_ARTIFACTS"/dist/*
 ```
 
-- Omit `--prerelease` for a stable release.
+- Do not create a GitHub Release for beta, release-candidate, stable, or post releases.
 - Never reuse or move a published version tag.
 
 # 9 Verify the published release from fresh containers
@@ -432,12 +427,10 @@ TMS_PROXY_URL=http://127.0.0.1:7890 \
   2>&1 | tee "$TMS_LOCAL_ARTIFACTS/verify-published-release.log"
 ```
 
-- Run this chapter only after PyPI, the Git tag, and the GitHub Release exist.
+- Run this chapter only after PyPI and the Git tag exist.
 - Copy the approved `artifacts.sha256` to `$TMS_REMOTE_ARTIFACTS` before invoking the script.
 - Keep Chapter 9 implemented as auditable shell; do not move it into a Python orchestration command.
 - Require PyPI to contain exactly the two wheels and sdist recorded by the approved manifest, with matching SHA-256 digests.
-- Require the GitHub Release for `v$TMS_RELEASE_VERSION` to exist.
-- Require prerelease versions to map to a GitHub prerelease and stable versions to map to a non-prerelease.
 - Start one fresh `--rm` container for each CUDA major.
 - Before installation, require Python to report that `torch_memory_saver` is absent.
 - Install the exact published version from PyPI, never from the local `dist/` directory.
