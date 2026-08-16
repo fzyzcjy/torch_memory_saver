@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -37,6 +38,44 @@ def _load_pytest_skip_gate_module() -> ModuleType:
 gpu_validation = _load_gpu_validation_module()
 pytest_skip_gate = _load_pytest_skip_gate_module()
 cli_runner = CliRunner()
+
+
+class TestPytestSkipGate:
+    def test_plugin_registers_with_pytest_fixture_manager(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """The skip gate remains hashable when pytest registers fixture plugins."""
+
+        (tmp_path / "test_sample.py").write_text(
+            "def test_sample():\n    assert True\n",
+            encoding="utf-8",
+        )
+        environment = {
+            **os.environ,
+            "PYTHONPATH": str(Path(__file__).parent),
+            "TMS_EXPECTED_PYTEST_SKIPS": "{}",
+        }
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-p",
+                "pytest_skip_gate",
+                str(tmp_path),
+                "-q",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=environment,
+            timeout=30,
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "SKIP_GATE_RESULT=pass" in result.stdout
 
 
 class TestGpuValidationCommand:

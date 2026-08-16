@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 
-@dataclass
+@dataclass(eq=False)
 class SkipGate:
     expected: dict[str, str]
     actual: dict[str, str] = field(default_factory=dict)
