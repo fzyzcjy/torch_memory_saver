@@ -168,6 +168,13 @@ class TestGpuValidationCommand:
         assert "--deselect" not in gpu_validation._X86_VALIDATION_SCRIPT
         assert "--deselect" not in gpu_validation._ARM_VALIDATION_SCRIPT
 
+    def test_every_inline_shell_script_enables_strict_mode(self) -> None:
+        """Every harness-owned inline shell starts in strict traced mode."""
+
+        assert gpu_validation._LUPINE_SMOKE_SCRIPT.startswith("set -euxo pipefail\n")
+        assert gpu_validation._X86_VALIDATION_SCRIPT.startswith("set -euxo pipefail\n")
+        assert gpu_validation._ARM_VALIDATION_SCRIPT.startswith("set -euxo pipefail\n")
+
     def test_lupine_runtime_tests_declare_exact_skip_markers(self) -> None:
         """Only the two host-memory tests opt out under Lupine."""
 
@@ -532,6 +539,7 @@ class TestGpuValidationCommand:
             "timeout --signal=TERM --kill-after=5s 20s python3 -c"
             in client_commands[0][-1]
         )
+        assert client_commands[0][-1] == gpu_validation._LUPINE_SMOKE_SCRIPT
 
     def test_lupine_runner_records_worker_identity_after_smoke_failure(
         self,
@@ -551,8 +559,9 @@ class TestGpuValidationCommand:
             check: bool = True,
         ) -> subprocess.CompletedProcess[str]:
             commands.append((command, check))
-            if command[:3] == ["docker", "run", "--rm"] and command[-1].startswith(
-                "for attempt in"
+            if (
+                command[:3] == ["docker", "run", "--rm"]
+                and command[-1] == gpu_validation._LUPINE_SMOKE_SCRIPT
             ):
                 raise subprocess.CalledProcessError(returncode=9, cmd=command)
             return subprocess.CompletedProcess(args=command, returncode=0)
@@ -567,7 +576,7 @@ class TestGpuValidationCommand:
             index
             for index, (command, _) in enumerate(commands)
             if command[:3] == ["docker", "run", "--rm"]
-            and command[-1].startswith("for attempt in")
+            and command[-1] == gpu_validation._LUPINE_SMOKE_SCRIPT
         )
         assert commands[smoke_index + 1][0][:4] == [
             "docker",

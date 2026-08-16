@@ -342,6 +342,138 @@ class TestCommandLogging:
         )
 
 
+class TestPreUpload:
+    def test_pre_upload_cli_dispatches_the_complete_gate(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The public pre-upload command accepts every evidence boundary input."""
+
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        manifest = tmp_path / "artifacts.sha256"
+        manifest.touch()
+        calls: list[dict[str, object]] = []
+        monkeypatch.setattr(
+            release_checks,
+            "run_pre_upload_checks",
+            lambda **kwargs: calls.append(kwargs),
+        )
+
+        result = cli_runner.invoke(
+            release_checks.app,
+            [
+                "pre-upload",
+                "--dist-dir",
+                str(dist_dir),
+                "--manifest",
+                str(manifest),
+                "--expected-version",
+                "0.0.10b1",
+                "--log-path",
+                str(tmp_path / "publish-recheck.log"),
+                "--repo-root",
+                str(tmp_path),
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert len(calls) == 1
+        assert calls[0]["expected_version"] == "0.0.10b1"
+        assert calls[0]["dist_dir"] == dist_dir
+        assert calls[0]["manifest"] == manifest
+
+    def test_one_command_runs_every_pre_upload_gate(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The combined gate checks source, artifacts, Twine, and namespaces."""
+
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        _write_release_artifacts(dist_dir=dist_dir, version="0.0.10b1")
+        repo_root = tmp_path / "repo"
+        _write_repo_source(repo_root=repo_root, version="0.0.10b1")
+        manifest = tmp_path / "artifacts.sha256"
+        release_checks.write_sha256_manifest(dist_dir=dist_dir, output=manifest)
+        commands: list[list[str]] = []
+
+        def complete_command(*, command: list[str], log_path: Path) -> int:
+            commands.append(command)
+            return 0
+
+        monkeypatch.setattr(release_checks, "run_logged_command", complete_command)
+        monkeypatch.setattr(
+            release_checks,
+            "find_publish_collisions",
+            lambda *, version, remote, repository: [],
+        )
+        log_path = tmp_path / "publish-recheck.log"
+
+        release_checks.run_pre_upload_checks(
+            dist_dir=dist_dir,
+            manifest=manifest,
+            expected_version="0.0.10b1",
+            log_path=log_path,
+            repo_root=repo_root,
+            remote="origin",
+            repository="fzyzcjy/torch_memory_saver",
+        )
+
+        assert commands[0][:2] == ["bash", "-lc"]
+        assert commands[0][2].startswith("set -euxo pipefail\n")
+        assert commands[1][:4] == [sys.executable, "-m", "twine", "check"]
+        evidence = log_path.read_text(encoding="utf-8")
+        assert "release_checks version" in evidence
+        assert "release_checks verify-manifest" in evidence
+        assert "release_checks artifacts" in evidence
+        assert "release_checks publish-preflight" in evidence
+        assert evidence.count("RESULT: returncode=0") == 4
+
+    def test_pre_upload_namespace_collision_is_logged(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A late namespace collision fails closed with complete evidence."""
+
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        _write_release_artifacts(dist_dir=dist_dir, version="0.0.10b1")
+        repo_root = tmp_path / "repo"
+        _write_repo_source(repo_root=repo_root, version="0.0.10b1")
+        manifest = tmp_path / "artifacts.sha256"
+        release_checks.write_sha256_manifest(dist_dir=dist_dir, output=manifest)
+        monkeypatch.setattr(
+            release_checks,
+            "run_logged_command",
+            lambda *, command, log_path: 0,
+        )
+        monkeypatch.setattr(
+            release_checks,
+            "find_publish_collisions",
+            lambda *, version, remote, repository: ["PyPI version 0.0.10b1"],
+        )
+        log_path = tmp_path / "publish-recheck.log"
+
+        with pytest.raises(ValueError, match="Release identity already exists"):
+            release_checks.run_pre_upload_checks(
+                dist_dir=dist_dir,
+                manifest=manifest,
+                expected_version="0.0.10b1",
+                log_path=log_path,
+                repo_root=repo_root,
+                remote="origin",
+                repository="fzyzcjy/torch_memory_saver",
+            )
+
+        evidence = log_path.read_text(encoding="utf-8")
+        assert "Traceback" in evidence
+        assert "RESULT: error=ValueError" in evidence
+
+
 class TestArtifactValidation:
     def test_complete_release_artifact_set_is_accepted(self, tmp_path: Path) -> None:
         """Both architecture wheels and the sdist satisfy the release gate."""
@@ -619,6 +751,18 @@ def _write_release_artifacts(
         repo_root=dist_dir,
         omitted_source=omitted_source,
     )
+
+
+def _write_repo_source(*, repo_root: Path, version: str) -> None:
+    repo_root.mkdir()
+    (repo_root / "setup.py").write_text(
+        f'from setuptools import setup\nsetup(version="{version}")\n',
+        encoding="utf-8",
+    )
+    csrc_dir = repo_root / "csrc"
+    csrc_dir.mkdir()
+    for source_name in ("core.cpp", "core.h", "hardware_xpu_support.cpp"):
+        (csrc_dir / source_name).write_text(source_name, encoding="utf-8")
 
 
 def _write_wheel(*, wheel_path: Path, version: str, architecture: str) -> None:

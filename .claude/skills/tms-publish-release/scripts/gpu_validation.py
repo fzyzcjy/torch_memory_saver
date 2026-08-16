@@ -74,6 +74,14 @@ _EXPECTED_LUPINE_SKIPS = (
         for hook_mode in ("preload", "torch")
     ),
 )
+_LUPINE_SMOKE_SCRIPT = r"""
+set -euxo pipefail
+for attempt in $(seq 1 30); do
+    timeout --signal=TERM --kill-after=5s 20s python3 -c 'import torch; assert torch.cuda.is_available(); print(torch.cuda.get_device_name(0))' && exit 0
+    sleep 2
+done
+exit 1
+""".strip()
 _X86_VALIDATION_SCRIPT = r"""
 set -euxo pipefail
 python --version
@@ -434,7 +442,7 @@ def _run_lupine_case(*, config: GpuValidationConfig, case: GpuValidationCase) ->
                 case.image,
                 "bash",
                 "-lc",
-                "for attempt in $(seq 1 30); do timeout --signal=TERM --kill-after=5s 20s python3 -c 'import torch; assert torch.cuda.is_available(); print(torch.cuda.get_device_name(0))' && exit 0; sleep 2; done; exit 1",
+                _LUPINE_SMOKE_SCRIPT,
             ],
             log_path=log_path,
         )

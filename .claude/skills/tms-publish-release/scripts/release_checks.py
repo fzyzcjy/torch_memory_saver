@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["click", "typer"]
+# dependencies = ["click", "twine", "typer"]
 # ///
 
 from __future__ import annotations
@@ -13,8 +13,11 @@ import hashlib
 import re
 import shlex
 import subprocess
+import sys
 import tarfile
+import traceback
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
@@ -57,14 +60,14 @@ def _version_command(
     ],
     expected_version: Annotated[str, typer.Option()],
 ) -> None:
-    version = read_setup_version(setup_py=setup_py)
-    validate_canonical_version(version=version)
-    if version != expected_version:
-        raise typer.BadParameter(
-            f"setup.py version mismatch: expected {expected_version!r}, found {version!r}",
-            param_hint="--expected-version",
+    try:
+        validate_setup_version(
+            setup_py=setup_py,
+            expected_version=expected_version,
         )
-    typer.echo(f"Validated canonical setup.py version: {version}")
+    except ValueError as error:
+        raise typer.BadParameter(str(error), param_hint="--expected-version") from error
+    typer.echo(f"Validated canonical setup.py version: {expected_version}")
 
 
 @app.command("pypi")
@@ -108,6 +111,40 @@ def _publish_preflight_command(
     typer.echo(
         f"Confirmed publish identity is unused on PyPI, {remote}, and GitHub: {expected_version}"
     )
+
+
+@app.command("pre-upload")
+def _pre_upload_command(
+    dist_dir: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=False, dir_okay=True, readable=True),
+    ],
+    manifest: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=True, dir_okay=False, readable=True),
+    ],
+    expected_version: Annotated[str, typer.Option()],
+    log_path: Annotated[Path, typer.Option(file_okay=True, dir_okay=False)],
+    repo_root: Annotated[
+        Path,
+        typer.Option(exists=True, file_okay=False, dir_okay=True, readable=True),
+    ] = Path("."),
+    remote: Annotated[str, typer.Option()] = "origin",
+    repository: Annotated[str, typer.Option()] = "fzyzcjy/torch_memory_saver",
+) -> None:
+    try:
+        run_pre_upload_checks(
+            dist_dir=dist_dir,
+            manifest=manifest,
+            expected_version=expected_version,
+            log_path=log_path,
+            repo_root=repo_root,
+            remote=remote,
+            repository=repository,
+        )
+    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as error:
+        raise click.ClickException(str(error)) from error
+    typer.echo(f"Completed every pre-upload check: {log_path}")
 
 
 @app.command("artifacts")
@@ -213,6 +250,15 @@ def read_setup_version(*, setup_py: Path) -> str:
             f"Expected exactly one literal setup(version=...), found {versions}"
         )
     return versions[0]
+
+
+def validate_setup_version(*, setup_py: Path, expected_version: str) -> None:
+    version = read_setup_version(setup_py=setup_py)
+    validate_canonical_version(version=version)
+    if version != expected_version:
+        raise ValueError(
+            f"setup.py version mismatch: expected {expected_version!r}, found {version!r}"
+        )
 
 
 def validate_canonical_version(*, version: str) -> None:
@@ -510,6 +556,119 @@ def run_logged_command(*, command: list[str], log_path: Path) -> int:
         output.write(f"RESULT: returncode={result.returncode}\n")
         output.flush()
     return result.returncode
+
+
+def run_pre_upload_checks(
+    *,
+    dist_dir: Path,
+    manifest: Path,
+    expected_version: str,
+    log_path: Path,
+    repo_root: Path,
+    remote: str,
+    repository: str,
+) -> None:
+    validate_canonical_version(version=expected_version)
+    git_script = r"""
+set -euxo pipefail
+git -C "$2" fetch "$1" master
+git -C "$2" status --short --branch
+test -z "$(git -C "$2" status --porcelain)"
+git -C "$2" rev-parse HEAD
+git -C "$2" rev-parse "$1/master"
+test "$(git -C "$2" rev-parse HEAD)" = "$(git -C "$2" rev-parse "$1/master")"
+""".strip()
+    if (
+        returncode := run_logged_command(
+            command=[
+                "bash",
+                "-lc",
+                git_script,
+                "tms-pre-upload",
+                remote,
+                str(repo_root),
+            ],
+            log_path=log_path,
+        )
+    ) != 0:
+        raise RuntimeError(f"Git pre-upload checks failed with exit code {returncode}")
+
+    _run_logged_validation(
+        name="version",
+        arguments=[expected_version, str(repo_root / "setup.py")],
+        log_path=log_path,
+        validation=lambda: validate_setup_version(
+            setup_py=repo_root / "setup.py",
+            expected_version=expected_version,
+        ),
+    )
+    _run_logged_validation(
+        name="verify-manifest",
+        arguments=[str(manifest), str(dist_dir)],
+        log_path=log_path,
+        validation=lambda: verify_sha256_manifest(
+            dist_dir=dist_dir,
+            manifest=manifest,
+        ),
+    )
+    _run_logged_validation(
+        name="artifacts",
+        arguments=[expected_version, str(dist_dir), str(repo_root)],
+        log_path=log_path,
+        validation=lambda: validate_release_artifacts(
+            dist_dir=dist_dir,
+            expected_version=expected_version,
+            repo_root=repo_root,
+        ),
+    )
+    artifact_paths = sorted(path for path in dist_dir.iterdir() if path.is_file())
+    if (
+        returncode := run_logged_command(
+            command=[sys.executable, "-m", "twine", "check", *map(str, artifact_paths)],
+            log_path=log_path,
+        )
+    ) != 0:
+        raise RuntimeError(f"Twine check failed with exit code {returncode}")
+
+    def validate_namespaces() -> None:
+        if collisions := find_publish_collisions(
+            version=expected_version,
+            remote=remote,
+            repository=repository,
+        ):
+            raise ValueError(
+                f"Release identity already exists: {', '.join(collisions)}"
+            )
+
+    _run_logged_validation(
+        name="publish-preflight",
+        arguments=[expected_version, remote, repository],
+        log_path=log_path,
+        validation=validate_namespaces,
+    )
+
+
+def _run_logged_validation(
+    *,
+    name: str,
+    arguments: list[str],
+    log_path: Path,
+    validation: Callable[[], None],
+) -> None:
+    rendered_command = shlex.join(["release_checks", name, *arguments])
+    typer.echo(f"EXEC: {rendered_command}", err=True)
+    with log_path.open(mode="a", encoding="utf-8") as output:
+        output.write(f"EXEC: {rendered_command}\n")
+        output.flush()
+        try:
+            validation()
+        except Exception as error:
+            traceback.print_exc(file=output)
+            output.write(f"RESULT: error={type(error).__name__}: {error}\n")
+            output.flush()
+            raise
+        output.write("RESULT: returncode=0\n")
+        output.flush()
 
 
 def validate_sdist(*, sdist_path: Path, expected_version: str, repo_root: Path) -> None:

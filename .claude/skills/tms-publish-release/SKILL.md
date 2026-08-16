@@ -24,7 +24,8 @@ description: Use when preparing, building, validating, publishing, or verifying 
 # 2 Prepare isolated paths
 
 ```bash
-export TMS_RELEASE_VERSION=<VERSION>
+set -euxo pipefail
+export TMS_RELEASE_VERSION="<VERSION>"
 export TMS_RELEASE_SHA="$(git rev-parse --short=12 HEAD)"
 export TMS_RELEASE_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 export TMS_REMOTE_ROOT="/home/tom/workspace/torch_memory_saver_release_${TMS_RELEASE_VERSION}_${TMS_RELEASE_SHA}_${TMS_RELEASE_RUN_ID}"
@@ -44,6 +45,7 @@ mkdir "$TMS_LOCAL_ARTIFACTS"
 - Append every command, complete output, and exit result to `release-preflight.log`:
 
 ```bash
+set -euxo pipefail
 uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- git fetch origin master
 uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- git status --short --branch
 uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- git rev-parse HEAD
@@ -55,6 +57,7 @@ uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/relea
 - Read and validate the version without importing `setup.py`:
 
 ```bash
+set -euxo pipefail
 uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- \
   uv run --script "$TMS_RELEASE_CHECKS" version \
   --setup-py setup.py \
@@ -64,6 +67,7 @@ uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/relea
 - Confirm the target version does not already exist on PyPI:
 
 ```bash
+set -euxo pipefail
 uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- \
   uv run --script "$TMS_RELEASE_CHECKS" pypi \
   --expected-version "$TMS_RELEASE_VERSION"
@@ -76,10 +80,11 @@ uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/relea
 ## 3.2 Host and credential checks
 
 ```bash
+set -euxo pipefail
 uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- \
-  ssh tom-workstation 'curl --retry 5 --retry-delay 1 --retry-all-errors -x http://127.0.0.1:7890 -I --max-time 20 https://registry-1.docker.io/v2/'
+  ssh tom-workstation 'set -euxo pipefail; curl --retry 5 --retry-delay 1 --retry-all-errors -x http://127.0.0.1:7890 -I --max-time 20 https://registry-1.docker.io/v2/'
 uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- \
-  ssh tom-workstation 'test -x /home/tom/.local/bin/uv; nvidia-smi --query-gpu=index,name,driver_version,memory.total,memory.used,utilization.gpu --format=csv,noheader; docker version; df -h / /home/tom'
+  ssh tom-workstation 'set -euxo pipefail; test -x /home/tom/.local/bin/uv; nvidia-smi --query-gpu=index,name,driver_version,memory.total,memory.used,utilization.gpu --format=csv,noheader; docker version; df -h / /home/tom'
 uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- \
   /usr/bin/stat -f '%N mode=%Lp size=%z' "$HOME/.pypirc"
 ```
@@ -97,8 +102,9 @@ uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/relea
 - Check for an existing ARM64 binfmt handler:
 
 ```bash
+set -euxo pipefail
 uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- \
-  ssh tom-workstation 'test -r /proc/sys/fs/binfmt_misc/qemu-aarch64 && cat /proc/sys/fs/binfmt_misc/qemu-aarch64'
+  ssh tom-workstation 'set -euxo pipefail; test -r /proc/sys/fs/binfmt_misc/qemu-aarch64; cat /proc/sys/fs/binfmt_misc/qemu-aarch64'
 ```
 
 - If it is missing, stop for approval before installing QEMU binfmt.
@@ -107,8 +113,10 @@ uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/relea
 - After approval, install only ARM64 and verify it with an ARM64 Alpine container:
 
 ```bash
+set -euxo pipefail
 uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- \
-  ssh tom-workstation 'docker run --privileged --rm tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64
+  ssh tom-workstation 'set -euxo pipefail
+docker run --privileged --rm tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64
 cat /proc/sys/fs/binfmt_misc/qemu-aarch64
 docker run --rm --platform linux/arm64 alpine:3.22 uname -m'
 ```
@@ -120,19 +128,21 @@ docker run --rm --platform linux/arm64 alpine:3.22 uname -m'
 
 | Script | Responsibility | Mutates release state |
 | --- | --- | --- |
-| `.claude/skills/tms-publish-release/scripts/release_checks.py` | Version, namespace, artifact, manifest, publish-preflight, and append-only command-log gates | No |
+| `.claude/skills/tms-publish-release/scripts/release_checks.py` | Version, namespace, artifact, manifest, one-command pre-upload, and append-only command-log gates | No |
 | `.claude/skills/tms-publish-release/scripts/gpu_validation.py` | Four-cell fresh-container GPU runtime harness with exact skip enforcement | Creates only temporary validation resources |
 | `.claude/skills/tms-publish-release/scripts/pytest_skip_gate.py` | Exact pytest skipped-node and reason validator loaded by the harness | No |
+| `.claude/skills/tms-publish-release/scripts/verify_published_release.sh` | Auditable post-release PyPI, GitHub, CUDA 12, and CUDA 13 verification | Creates only temporary validation containers |
 
-- Keep upload, tag creation, and GitHub Release creation outside both scripts.
+- Keep upload, tag creation, and GitHub Release creation outside every release script.
 - Use `sdist` only for focused diagnostics.
 - Use `artifacts` for the canonical release workflow after all three distributions exist.
 
 ## 3.5 Create and synchronize the remote source tree
 
 ```bash
+set -euxo pipefail
 uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- \
-  ssh tom-workstation "test ! -e '$TMS_REMOTE_ROOT' && test ! -e '$TMS_REMOTE_ARTIFACTS' && mkdir '$TMS_REMOTE_ROOT' '$TMS_REMOTE_ARTIFACTS'"
+  ssh tom-workstation "set -euxo pipefail; test ! -e '$TMS_REMOTE_ROOT'; test ! -e '$TMS_REMOTE_ARTIFACTS'; mkdir '$TMS_REMOTE_ROOT' '$TMS_REMOTE_ARTIFACTS'"
 uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- \
   rsync -a \
   --exclude .git \
@@ -144,7 +154,7 @@ uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/relea
   ./ "tom-workstation:$TMS_REMOTE_ROOT/"
 uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- shasum -a 256 setup.py
 uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/release-preflight.log" -- \
-  ssh tom-workstation "sha256sum '$TMS_REMOTE_ROOT/setup.py'"
+  ssh tom-workstation "set -euxo pipefail; sha256sum '$TMS_REMOTE_ROOT/setup.py'"
 ```
 
 - Do not use `rsync --delete`.
@@ -158,7 +168,8 @@ uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/relea
 - Build with the official PyTorch CUDA 12.8 and CUDA 13.0 manylinux images.
 
 ```bash
-ssh tom-workstation "cd '$TMS_REMOTE_ROOT' \
+set -euxo pipefail
+ssh tom-workstation "set -euxo pipefail; cd '$TMS_REMOTE_ROOT' \
   && make clean \
   && TMS_PYTHON_BUILD_IMAGE=python:3.11 make build-wheel-multi-cuda \
   > '$TMS_REMOTE_ARTIFACTS/build-x86_64.log' 2>&1"
@@ -167,7 +178,8 @@ ssh tom-workstation "cd '$TMS_REMOTE_ROOT' \
 - Run long commands in a background exec session and babysit with:
 
 ```bash
-ssh tom-workstation "tail -80 '$TMS_REMOTE_ARTIFACTS/build-x86_64.log'"
+set -euxo pipefail
+ssh tom-workstation "set -euxo pipefail; tail -80 '$TMS_REMOTE_ARTIFACTS/build-x86_64.log'"
 ```
 
 ## 4.2 aarch64 wheel on the x86_64 host
@@ -175,7 +187,8 @@ ssh tom-workstation "tail -80 '$TMS_REMOTE_ARTIFACTS/build-x86_64.log'"
 - Build with the official ARM64 PyTorch CUDA 12.8 and CUDA 13.0 manylinux images.
 
 ```bash
-ssh tom-workstation "cd '$TMS_REMOTE_ROOT' \
+set -euxo pipefail
+ssh tom-workstation "set -euxo pipefail; cd '$TMS_REMOTE_ROOT' \
   && rm -rf build torch_memory_saver.egg-info \
   && DOCKER_DEFAULT_PLATFORM=linux/arm64 \
     TMS_PYTHON_BUILD_IMAGE=python:3.11 \
@@ -186,7 +199,8 @@ ssh tom-workstation "cd '$TMS_REMOTE_ROOT' \
 ## 4.3 Source distribution and artifact gate
 
 ```bash
-ssh tom-workstation "cd '$TMS_REMOTE_ROOT' \
+set -euxo pipefail
+ssh tom-workstation "set -euxo pipefail; cd '$TMS_REMOTE_ROOT' \
   && TMS_PYTHON_BUILD_IMAGE=python:3.11 make build-sdist \
   > '$TMS_REMOTE_ARTIFACTS/build-sdist.log' 2>&1 \
   && HTTP_PROXY=http://127.0.0.1:7890 HTTPS_PROXY=http://127.0.0.1:7890 \
@@ -283,7 +297,8 @@ Server evidence: complete Lupine server output captured with docker logs before 
 ## 5.2 Run the harness
 
 ```bash
-ssh tom-workstation "HTTP_PROXY=http://127.0.0.1:7890 HTTPS_PROXY=http://127.0.0.1:7890 \
+set -euxo pipefail
+ssh tom-workstation "set -euxo pipefail; HTTP_PROXY=http://127.0.0.1:7890 HTTPS_PROXY=http://127.0.0.1:7890 \
   /home/tom/.local/bin/uv run --script \
   '$TMS_REMOTE_ROOT/.claude/skills/tms-publish-release/scripts/gpu_validation.py' \
   --release-root '$TMS_REMOTE_ROOT' \
@@ -294,6 +309,7 @@ ssh tom-workstation "HTTP_PROXY=http://127.0.0.1:7890 HTTPS_PROXY=http://127.0.0
 # 6 Pull and recheck artifacts locally
 
 ```bash
+set -euxo pipefail
 uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/local-recheck.log" -- \
   rsync -a "tom-workstation:$TMS_REMOTE_ARTIFACTS/" "$TMS_LOCAL_ARTIFACTS/"
 uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/local-recheck.log" -- \
@@ -304,7 +320,7 @@ uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/local
   --expected-version "$TMS_RELEASE_VERSION" \
   --repo-root .
 uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/local-recheck.log" -- \
-  zsh -lc 'UV_CACHE_DIR="$TMS_LOCAL_ARTIFACTS/uv-cache" uv run --no-project --with twine python -m twine check "$TMS_LOCAL_ARTIFACTS"/dist/*'
+  zsh -lc 'set -euxo pipefail; UV_CACHE_DIR="$TMS_LOCAL_ARTIFACTS/uv-cache" uv run --no-project --with twine python -m twine check "$TMS_LOCAL_ARTIFACTS"/dist/*'
 uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/local-recheck.log" -- \
   uv run --script "$TMS_RELEASE_CHECKS" write-manifest \
   --dist-dir "$TMS_LOCAL_ARTIFACTS/dist" \
@@ -356,33 +372,21 @@ Human review: pending
 # 8 Publish
 
 - Continue only after the Section 7 report has been reviewed and the human gives explicit confirmation.
-- Append every immediate pre-upload check and its complete output to `publish-recheck.log`:
+- Run one fail-closed command that appends every immediate pre-upload check and its complete output to `publish-recheck.log`:
 
 ```bash
-uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/publish-recheck.log" -- git fetch origin master
-uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/publish-recheck.log" -- git status --short --branch
-uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/publish-recheck.log" -- git rev-parse HEAD
-uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/publish-recheck.log" -- git rev-parse origin/master
-uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/publish-recheck.log" -- \
-  zsh -lc 'test -z "$(git status --porcelain)" && test "$(git rev-parse HEAD)" = "$(git rev-parse origin/master)"'
-uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/publish-recheck.log" -- \
-  uv run --script "$TMS_RELEASE_CHECKS" verify-manifest \
+set -euxo pipefail
+UV_CACHE_DIR="$TMS_LOCAL_ARTIFACTS/uv-cache" uv run --script "$TMS_RELEASE_CHECKS" pre-upload \
   --dist-dir "$TMS_LOCAL_ARTIFACTS/dist" \
-  --manifest "$TMS_LOCAL_ARTIFACTS/artifacts.sha256"
-uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/publish-recheck.log" -- \
-  uv run --script "$TMS_RELEASE_CHECKS" artifacts \
-  --dist-dir "$TMS_LOCAL_ARTIFACTS/dist" \
+  --manifest "$TMS_LOCAL_ARTIFACTS/artifacts.sha256" \
   --expected-version "$TMS_RELEASE_VERSION" \
-  --repo-root .
-uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/publish-recheck.log" -- \
-  zsh -lc 'UV_CACHE_DIR="$TMS_LOCAL_ARTIFACTS/uv-cache" uv run --no-project --with twine python -m twine check "$TMS_LOCAL_ARTIFACTS"/dist/*'
-uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/publish-recheck.log" -- \
-  uv run --script "$TMS_RELEASE_CHECKS" publish-preflight \
-  --expected-version "$TMS_RELEASE_VERSION" \
+  --log-path "$TMS_LOCAL_ARTIFACTS/publish-recheck.log" \
+  --repo-root . \
   --remote origin \
   --repository fzyzcjy/torch_memory_saver
 ```
 
+- The command fetches `origin/master`; requires a clean tree and `HEAD == origin/master`; verifies the approved manifest; reruns the complete artifact and Twine gates; and rejects existing PyPI, tag, or GitHub Release identities.
 - Require the verified manifest to equal the three hashes approved in the Section 7 report.
 - Upload only the files covered by that manifest.
 - Treat an existing PyPI version, remote `v<VERSION>` tag, or GitHub Release as a hard failure.
@@ -390,6 +394,7 @@ uv run --script "$TMS_RELEASE_CHECKS" run --log-path "$TMS_LOCAL_ARTIFACTS/publi
 - Upload without `--skip-existing`; a collision is a hard failure:
 
 ```bash
+set -euxo pipefail
 UV_CACHE_DIR="$TMS_LOCAL_ARTIFACTS/uv-cache" uv run --no-project --with twine \
   python -m twine upload --non-interactive --repository pypi "$TMS_LOCAL_ARTIFACTS"/dist/*
 ```
@@ -398,6 +403,7 @@ UV_CACHE_DIR="$TMS_LOCAL_ARTIFACTS/uv-cache" uv run --no-project --with twine \
 - Create an annotated tag and prerelease only after PyPI confirms the version:
 
 ```bash
+set -euxo pipefail
 git tag -a "v$TMS_RELEASE_VERSION" -m "Release $TMS_RELEASE_VERSION" "$(git rev-parse HEAD)"
 git push origin "v$TMS_RELEASE_VERSION"
 gh release create "v$TMS_RELEASE_VERSION" \
@@ -411,16 +417,33 @@ gh release create "v$TMS_RELEASE_VERSION" \
 - Omit `--prerelease` for a stable release.
 - Never reuse or move a published version tag.
 
-# 9 Post-release verification
+# 9 Verify the published release from fresh containers
 
 ```bash
-curl -fsSL "https://pypi.org/pypi/torch-memory-saver/$TMS_RELEASE_VERSION/json"
-python -m pip install --pre "torch_memory_saver==$TMS_RELEASE_VERSION"
-gh release view "v$TMS_RELEASE_VERSION" --repo fzyzcjy/torch_memory_saver
+set -euxo pipefail
+rsync -a "$TMS_LOCAL_ARTIFACTS/artifacts.sha256" \
+  "tom-workstation:$TMS_REMOTE_ARTIFACTS/artifacts.sha256"
+ssh tom-workstation "set -euxo pipefail
+cd '$TMS_REMOTE_ROOT'
+TMS_PROXY_URL=http://127.0.0.1:7890 \
+  .claude/skills/tms-publish-release/scripts/verify_published_release.sh \
+  '$TMS_RELEASE_VERSION' \
+  '$TMS_REMOTE_ARTIFACTS/artifacts.sha256'" \
+  2>&1 | tee "$TMS_LOCAL_ARTIFACTS/verify-published-release.log"
 ```
 
-- Verify PyPI lists both wheels and the sdist with the recorded hashes.
-- Run an install smoke test in a fresh CUDA 12 environment; use `--pre` for beta or RC versions.
+- Run this chapter only after PyPI, the Git tag, and the GitHub Release exist.
+- Copy the approved `artifacts.sha256` to `$TMS_REMOTE_ARTIFACTS` before invoking the script.
+- Keep Chapter 9 implemented as auditable shell; do not move it into a Python orchestration command.
+- Require PyPI to contain exactly the two wheels and sdist recorded by the approved manifest, with matching SHA-256 digests.
+- Require the GitHub Release for `v$TMS_RELEASE_VERSION` to exist.
+- Require prerelease versions to map to a GitHub prerelease and stable versions to map to a non-prerelease.
+- Start one fresh `--rm` container for each CUDA major.
+- Before installation, require Python to report that `torch_memory_saver` is absent.
+- Install the exact published version from PyPI, never from the local `dist/` directory.
+- Require the installed package to resolve from `site-packages`, PyTorch to report the matching CUDA major, and the GPU to be the 4090D.
+- Run the complete runtime pytest suite with the exact structured skip gate in both containers.
+- Require local `verify-published-release.log` to contain two passing pytest summaries and terminal `RESULT: returncode=0`.
 - Report any partial release state explicitly.
 - Never delete a published PyPI version to make a retry look clean.
 - Increment the prerelease number for a retry.
