@@ -150,9 +150,7 @@ class TestGpuValidationCommand:
             "--deselect 'test/test_examples.py::test_cpu_backup_preload_backend_from_env'"
             in script
         )
-        assert (
-            "--deselect 'test/test_examples.py::test_disk_backup[preload]'" in script
-        )
+        assert "--deselect 'test/test_examples.py::test_disk_backup[preload]'" in script
         assert "--deselect 'test/test_examples.py::test_disk_backup[torch]'" in script
 
     def test_arm_script_requires_real_aarch64_gpu_execution(self) -> None:
