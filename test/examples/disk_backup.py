@@ -24,6 +24,50 @@ def run(hook_mode: str):
         shutil.rmtree(disk_dir, ignore_errors=True)
 
 
+def run_multi_device_restore(hook_mode: str):
+    os.environ["TMS_DISK_BACKUP_CHUNK_MB"] = "1"
+    torch_memory_saver.hook_mode = hook_mode
+    disk_dir = tempfile.mkdtemp(prefix="tms_disk_backup_multi_device_")
+    torch_memory_saver.set_disk_backup_dir(disk_dir)
+    tensors: list[torch.Tensor] = []
+
+    try:
+        for device_id, value in enumerate((7, 13)):
+            torch.cuda.set_device(device_id)
+            with torch_memory_saver.region(
+                tag=f"disk_restore_{device_id}",
+                enable_disk_backup=True,
+            ):
+                tensors.append(
+                    torch.full(
+                        (16 * 1024 * 1024,),
+                        value,
+                        dtype=torch.uint8,
+                        device=f"cuda:{device_id}",
+                    )
+                )
+
+        for device_id in range(2):
+            torch.cuda.set_device(device_id)
+            torch_memory_saver.pause(tag=f"disk_restore_{device_id}")
+
+        torch.cuda.set_device(0)
+        torch_memory_saver.resume()
+        assert torch.cuda.current_device() == 0
+
+        restored: list[torch.Tensor] = []
+        for device_id, (tensor, value) in enumerate(
+            zip(tensors, (7, 13), strict=True)
+        ):
+            stream = torch.cuda.Stream(device=device_id)
+            with torch.cuda.stream(stream):
+                restored.append(tensor.clone())
+            stream.synchronize()
+            assert bool(torch.all(restored[-1] == value).item())
+    finally:
+        shutil.rmtree(disk_dir, ignore_errors=True)
+
+
 def _run(disk_dir: str):
     chunk_bytes = 1 * 1024 * 1024
     numel = chunk_bytes * 13 // 4 + 12345  # ~13.4 fp32 chunks: multi-chunk, non-even tail

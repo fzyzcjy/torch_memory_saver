@@ -255,7 +255,8 @@ cudaError_t TorchMemorySaver::resume(const std::string& tag) {
                 cpu_backuper::release(metadata.cpu_backup);
             }
         } else if (metadata.enable_disk_backup) {
-            disk_backend_.onload(ptr, metadata.raw_size, metadata.disk);
+            disk_backend_.onload(
+                ptr, metadata.raw_size, static_cast<int>(metadata.device), metadata.disk);
         }
 
 #ifdef TMS_DEBUG_LOG

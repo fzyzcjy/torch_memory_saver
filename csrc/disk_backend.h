@@ -17,7 +17,7 @@ public:
     void set_dir(const std::string& dir) { dir_ = dir; }
 
     void offload(void* gpu_ptr, size_t size, DiskBackupSlot& slot);
-    void onload(void* gpu_ptr, size_t size, DiskBackupSlot& slot);
+    void onload(void* gpu_ptr, size_t size, int device, DiskBackupSlot& slot);
     void release(DiskBackupSlot& slot);
 
 private:

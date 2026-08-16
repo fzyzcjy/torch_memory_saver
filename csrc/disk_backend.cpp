@@ -143,12 +143,16 @@ void DiskBackend::offload(void* gpu_ptr, size_t size, DiskBackupSlot& slot) {
     close(fd);
 }
 
-void DiskBackend::onload(void* gpu_ptr, size_t size, DiskBackupSlot& slot) {
+void DiskBackend::onload(void* gpu_ptr, size_t size, int device, DiskBackupSlot& slot) {
     ensure_staging_buf_();
     SIMPLE_CHECK(!slot.path.empty(), "disk backup missing on resume (was it ever paused?)");
     int fd = open_slot_file_(slot);
+    int original_device = -1;
+    CUDA_ERROR_CHECK(cudaGetDevice(&original_device));
+    CUDA_ERROR_CHECK(cudaSetDevice(device));
     stream_chunked(fd, gpu_ptr, size, staging_buf_.data(), chunk_bytes_, /*to_disk=*/false);
     CUDA_ERROR_CHECK(cudaDeviceSynchronize());
+    CUDA_ERROR_CHECK(cudaSetDevice(original_device));
     drop_page_cache(fd, size);
     close(fd);
 }

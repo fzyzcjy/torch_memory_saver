@@ -106,6 +106,15 @@ def test_disk_backup(hook_mode):
 
 
 @_skip_on_xpu
+@_multi_device_only
+@pytest.mark.parametrize("hook_mode", _HOOK_MODES)
+def test_disk_backup_multi_device_restore(hook_mode):
+    """Restore each disk-backed allocation on its owning CUDA device."""
+
+    _test_core(disk_backup.run_multi_device_restore, hook_mode=hook_mode)
+
+
+@_skip_on_xpu
 @pytest.mark.parametrize("hook_mode", _HOOK_MODES)
 def test_cpu_backup_retain_from_env(hook_mode):
     with change_env("TMS_RETAIN_CPU_BACKUP", "1"):
