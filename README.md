@@ -52,6 +52,20 @@ Not only does torch_memory_saver make tensors compatible with CUDA graph, but we
 
 API: Change `torch.cuda.graph(...)` to `torch_memory_saver.cuda_graph(...)`
 
+If a retained CUDA graph contains NCCL operations on TMS-managed buffers, NCCL
+graph registrations can become stale when TMS replaces the buffers' physical
+backing during `pause()` / `resume()`, and graph replay may hang
+([#88](https://github.com/fzyzcjy/torch_memory_saver/issues/88)). Either keep
+buffers passed to NCCL operations outside TMS-managed regions, or disable NCCL
+graph user-buffer registration before starting the workload:
+
+```bash
+export NCCL_GRAPH_REGISTER=0
+```
+
+This leaves NCCL and CUDA graphs enabled, but may give up the associated
+zero-copy optimization from NCCL CUDA-graph user-buffer registration.
+
 ### CPU Backup
 
 By default, in order to save time, the content is thrown away. This is useful for, for example, KV cache that are to be staled, or model weights that are to be updated.
