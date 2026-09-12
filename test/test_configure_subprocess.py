@@ -51,3 +51,38 @@ def test_restores_ld_preload_after_context():
             with configure_subprocess():
                 assert os.environ["LD_PRELOAD"] != original
         assert os.environ.get("LD_PRELOAD") == original
+
+
+def test_prepends_mapped_cudart_dir_and_restores(monkeypatch):
+    """Split site-packages layout: the child must see the parent's libcudart dir first on LD_LIBRARY_PATH."""
+    from torch_memory_saver.hooks import mode_preload
+
+    monkeypatch.setattr(mode_preload, "_mapped_cudart_dir", lambda: "/site_b/nvidia/cu13/lib")
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/existing/lib")
+    with patch("torch_memory_saver.hooks.mode_preload.get_binary_path_from_package", return_value=FAKE_LIB):
+        with mode_preload.configure_subprocess():
+            assert os.environ["LD_LIBRARY_PATH"] == "/site_b/nvidia/cu13/lib:/existing/lib"
+    assert os.environ["LD_LIBRARY_PATH"] == "/existing/lib"
+
+
+def test_no_mapped_cudart_leaves_ld_library_path_untouched(monkeypatch):
+    from torch_memory_saver.hooks import mode_preload
+
+    monkeypatch.setattr(mode_preload, "_mapped_cudart_dir", lambda: None)
+    monkeypatch.delenv("LD_LIBRARY_PATH", raising=False)
+    with patch("torch_memory_saver.hooks.mode_preload.get_binary_path_from_package", return_value=FAKE_LIB):
+        with mode_preload.configure_subprocess():
+            assert "LD_LIBRARY_PATH" not in os.environ
+
+
+def test_mapped_cudart_dir_parses_proc_maps(tmp_path):
+    from torch_memory_saver.hooks.mode_preload import _mapped_cudart_dir
+
+    maps = tmp_path / "maps"
+    maps.write_text(
+        "aaaa0000-aaaa1000 r-xp 00000000 08:01 1 /usr/lib/libc.so.6\n"
+        "aaaa2000-aaaa3000 rw-p 00000000 00:00 0\n"
+        "aaaa4000-aaaa5000 r-xp 00000000 08:01 2 /site_b/nvidia/cu13/lib/libcudart.so.13\n"
+    )
+    assert _mapped_cudart_dir(str(maps)) == "/site_b/nvidia/cu13/lib"
+    assert _mapped_cudart_dir(str(tmp_path / "absent")) is None

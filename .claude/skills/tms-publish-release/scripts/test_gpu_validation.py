@@ -190,6 +190,7 @@ class TestGpuValidationCommand:
         assert "--no-deps" in script
         assert "test_configure_subprocess.py" in script
         assert "test_examples.py" in script
+        assert "test_preload_hook_loader.py" in script
         assert "test_utils.py" in script
         assert "pytest -p pytest_skip_gate test -vv -ra" in script
         assert "timeout --signal=TERM --kill-after=30s 3600s" in script
@@ -199,6 +200,7 @@ class TestGpuValidationCommand:
         assert "site-packages" in script
         assert "/workspace/scripts" not in script
         assert "test_merge_cuda_wheels.py" not in script
+        assert "test_setup_rpath.py" not in script
         assert "pytest_skip_gate.py /validation/pytest_skip_gate.py" in script
 
     def test_gpu_scripts_do_not_deselect_runtime_tests(self) -> None:
@@ -337,6 +339,13 @@ class TestGpuValidationCommand:
         _write_test_inventory(release_root=tmp_path)
 
         gpu_validation._require_runtime_test_contract(release_root=tmp_path)
+
+    def test_runtime_test_classification_accepts_repository_inventory(self) -> None:
+        """New repository tests remain classified for release validation."""
+
+        gpu_validation._require_runtime_test_contract(
+            release_root=Path(__file__).parents[4]
+        )
 
     def test_runtime_test_classification_rejects_new_unclassified_module(
         self, tmp_path: Path

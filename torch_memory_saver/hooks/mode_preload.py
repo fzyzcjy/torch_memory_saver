@@ -1,6 +1,7 @@
 import logging
 import os
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+from pathlib import Path
 from torch_memory_saver.hooks.base import HookUtilBase
 from torch_memory_saver.utils import get_binary_path_from_package, change_env
 
@@ -30,5 +31,29 @@ def configure_subprocess():
 
     new_preload = f"{lib_path}:{current_preload}" if current_preload else lib_path
 
+    # the hook's $ORIGIN RUNPATH only covers co-located pip installs, so also expose the parent's libcudart dir
+    cudart_dir = _mapped_cudart_dir()
+    current_lib = os.environ.get("LD_LIBRARY_PATH", "")
+    new_lib = ":".join(x for x in (cudart_dir, current_lib) if x)
+
     with change_env("LD_PRELOAD", new_preload):
-        yield
+        with change_env("LD_LIBRARY_PATH", new_lib) if cudart_dir else nullcontext():
+            yield
+
+
+def _mapped_cudart_dir(maps_path="/proc/self/maps"):
+    try:
+        with open(maps_path) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        fields = line.split(maxsplit=5)
+        if len(fields) != 6:
+            continue
+
+        _address, _permissions, _offset, _device, _inode, pathname = fields
+        path = Path(pathname)
+        if path.name.startswith("libcudart.so."):
+            return str(path.parent)
+    return None

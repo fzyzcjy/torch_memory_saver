@@ -124,6 +124,7 @@ def _create_ext_modules(platform):
 
     # Common compile arguments
     extra_compile_args = ['-std=c++17', '-O3']
+    extra_link_args = []
     
     # Platform-specific configurations
     platform_home = Path(_find_platform_home(platform))
@@ -162,6 +163,13 @@ def _create_ext_modules(platform):
                 "(use `make build-wheel-multi-cuda` or scripts/build_multi_cuda.sh)."
             )
         name_suffix = f"_cu{cuda_major}"
+        # RUNPATH (not RPATH) so the LD_PRELOAD-ed hook finds the pip CUDA runtime but LD_LIBRARY_PATH still wins
+        runtime_rel = f"nvidia/cu{cuda_major}/lib" if int(cuda_major) >= 13 else "nvidia/cuda_runtime/lib"
+        extra_link_args = [
+            "-Wl,--enable-new-dtags",
+            f"-Wl,-rpath,$ORIGIN/{runtime_rel}",
+            f"-Wl,-rpath,$ORIGIN/../{runtime_rel}",
+        ]
     else:
         name_suffix = ""
 
@@ -190,6 +198,7 @@ def _create_ext_modules(platform):
             ],
             py_limited_api=True,
             extra_compile_args=extra_compile_args,
+            extra_link_args=extra_link_args,
         )
         for name, extra_macros in hook_variants
     ]

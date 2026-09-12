@@ -34,6 +34,8 @@ def test_published_release_script_uses_fresh_pypi_installs_and_runtime_tests() -
     assert "site-packages" in source
     assert "pytest -p pytest_skip_gate test -vv -ra" in source
     assert '"$REPOSITORY_ROOT/test:/release-tests:ro"' in source
+    assert "/release-tests/test_preload_hook_loader.py" in source
+    assert "test_setup_rpath.py" not in source
     assert "/dist/" not in source
 
 
