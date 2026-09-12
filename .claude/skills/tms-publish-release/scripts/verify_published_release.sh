@@ -76,7 +76,7 @@ CUDA_RUNTIME_LIB="$(python -c '\''from pathlib import Path; import os, site; maj
 export LD_LIBRARY_PATH="${CUDA_RUNTIME_LIB}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 mkdir -p /validation/test
 cp -a /release-tests/examples /validation/test/examples
-cp /release-tests/test_configure_subprocess.py /release-tests/test_examples.py /release-tests/test_utils.py /validation/test/
+cp /release-tests/test_configure_subprocess.py /release-tests/test_examples.py /release-tests/test_preload_hook_loader.py /release-tests/test_utils.py /validation/test/
 cd /validation
 CUDA_VISIBLE_DEVICES=0 timeout --signal=TERM --kill-after=30s 3600s python -m pytest -p pytest_skip_gate test -vv -ra
 '
