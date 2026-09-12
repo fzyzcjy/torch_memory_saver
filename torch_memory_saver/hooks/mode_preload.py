@@ -1,6 +1,7 @@
 import logging
 import os
 from contextlib import contextmanager, nullcontext
+from pathlib import Path
 from torch_memory_saver.hooks.base import HookUtilBase
 from torch_memory_saver.utils import get_binary_path_from_package, change_env
 
@@ -48,6 +49,11 @@ def _mapped_cudart_dir(maps_path="/proc/self/maps"):
         return None
     for line in lines:
         fields = line.split(maxsplit=5)
-        if len(fields) == 6 and os.path.basename(fields[5]).startswith("libcudart.so."):
-            return os.path.dirname(fields[5])
+        if len(fields) != 6:
+            continue
+
+        _address, _permissions, _offset, _device, _inode, pathname = fields
+        path = Path(pathname)
+        if path.name.startswith("libcudart.so."):
+            return str(path.parent)
     return None
