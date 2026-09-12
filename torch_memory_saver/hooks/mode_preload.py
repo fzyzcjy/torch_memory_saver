@@ -34,7 +34,7 @@ def configure_subprocess():
     # the hook's $ORIGIN RUNPATH only covers co-located pip installs, so also expose the parent's libcudart dir
     cudart_dir = _mapped_cudart_dir()
     current_lib = os.environ.get("LD_LIBRARY_PATH", "")
-    new_lib = f"{cudart_dir}:{current_lib}" if current_lib else cudart_dir
+    new_lib = ":".join(x for x in (cudart_dir, current_lib) if x)
 
     with change_env("LD_PRELOAD", new_preload):
         with change_env("LD_LIBRARY_PATH", new_lib) if cudart_dir else nullcontext():
