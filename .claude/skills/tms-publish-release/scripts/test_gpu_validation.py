@@ -338,6 +338,13 @@ class TestGpuValidationCommand:
 
         gpu_validation._require_runtime_test_contract(release_root=tmp_path)
 
+    def test_runtime_test_classification_accepts_repository_inventory(self) -> None:
+        """New repository tests remain classified for release validation."""
+
+        gpu_validation._require_runtime_test_contract(
+            release_root=Path(__file__).parents[4]
+        )
+
     def test_runtime_test_classification_rejects_new_unclassified_module(
         self, tmp_path: Path
     ) -> None:

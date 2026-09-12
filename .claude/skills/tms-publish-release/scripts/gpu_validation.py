@@ -30,7 +30,7 @@ _RUNTIME_TEST_MODULES = (
     "test_examples.py",
     "test_utils.py",
 )
-_BUILD_TOOL_TEST_MODULES = ("test_merge_cuda_wheels.py",)
+_BUILD_TOOL_TEST_MODULES = ("test_merge_cuda_wheels.py", "test_setup_rpath.py")
 _MULTI_DEVICE_SKIP_REASON = "Multi-device test requires at least two devices"
 _XPU_SKIP_REASON = "XPU-specific path"
 _LUPINE_SKIP_REASON = (
