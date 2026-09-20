@@ -119,6 +119,19 @@ namespace CUDAUtils {
             accessDesc.location.id = device;
             accessDesc.flags = hipMemAccessFlagsProtReadWrite;
             CURESULT_CHECK(hipMemSetAccess(ptr, allocation_size, &accessDesc, 1));
+
+            // hipMalloc'd memory is host-visible through the BAR aperture, and PyTorch 2.12+
+            // relies on that: _local_scalar_dense_cuda reads a scalar off a caching-allocator
+            // tensor by dereferencing its device pointer from the host whenever
+            // hipDeviceProp_t::isLargeBar is set. A VMM range carries no host mapping unless
+            // one is requested, so without this grant every .item() on hooked memory faults
+            // inside that read. Accesses are additive, so this leaves the device grant above
+            // in force.
+            hipMemAccessDesc hostAccessDesc = {};
+            hostAccessDesc.location.type = hipMemLocationTypeHost;
+            hostAccessDesc.location.id = 0;
+            hostAccessDesc.flags = hipMemAccessFlagsProtReadWrite;
+            CURESULT_CHECK(hipMemSetAccess(ptr, allocation_size, &hostAccessDesc, 1));
         }
     #endif
 
