@@ -3,6 +3,7 @@ from contextlib import nullcontext
 
 import multiprocessing
 import os
+import subprocess
 import sys
 import traceback
 import torch
@@ -21,6 +22,7 @@ from examples import (
     multi_device_torch_mode,
     training_engine,
     nested_region,
+    pause_inflight,
     xpu_scenarios,
 )
 
@@ -184,6 +186,38 @@ def test_training_engine():
 def test_cuda_vmm_granularity():
     with change_env("TMS_INIT_ENABLE", "1"):
         _test_core(cuda_vmm_granularity.run, hook_mode="preload")
+
+
+@pytest.mark.skipif(
+    not _device_module.is_available(),
+    reason="In-flight pause regression requires a GPU",
+)
+@pytest.mark.parametrize("hook_mode", _HOOK_MODES)
+@pytest.mark.parametrize("backup", ["none", "cpu"])
+def test_pause_inflight(hook_mode, backup):
+    _test_pause_inflight(hook_mode, backup, device_count=1)
+
+
+@_multi_device_only
+@pytest.mark.skipif(
+    not _device_module.is_available(),
+    reason="In-flight pause regression requires a GPU",
+)
+@pytest.mark.parametrize("hook_mode", _HOOK_MODES)
+def test_pause_inflight_multi_device(hook_mode):
+    _test_pause_inflight(hook_mode, "none", device_count=2)
+
+
+def _test_pause_inflight(hook_mode, backup, device_count):
+    ctx = torch_memory_saver.configure_subprocess() if hook_mode == "preload" else nullcontext()
+    with ctx:
+        # A device fault can terminate the child before the multiprocessing queue is written.
+        subprocess.run(
+            [sys.executable, pause_inflight.__file__, hook_mode, backup, str(device_count)],
+            env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
+            check=True,
+            timeout=120,
+        )
 
 
 @_skip_on_xpu

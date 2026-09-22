@@ -47,6 +47,7 @@ _EXPECTED_SINGLE_GPU_SKIPS = (
         for test_name in (
             "test_cpu_backup_multi_device_mmap_restore",
             "test_multi_device",
+            "test_pause_inflight_multi_device",
         )
         for hook_mode in ("preload", "torch")
     ),
