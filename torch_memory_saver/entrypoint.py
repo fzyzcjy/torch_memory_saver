@@ -325,7 +325,7 @@ class _TorchMemorySaverImpl:
 
     def pause(self, tag: Optional[str]):
         if self._is_xpu:
-            self._xpu_sync_affected_devices(tag)
+            self._sync_affected_devices(tag)
         tag_bytes = tag.encode("utf-8") if tag else None
         ret = self._binary_wrapper.cdll.tms_pause(tag_bytes)
         if self._is_xpu and ret != 0:
@@ -345,16 +345,16 @@ class _TorchMemorySaverImpl:
                     f"(code {ret}); some allocations remain paused. Retry after "
                     "resolving the failure (e.g. free device memory)."
                 )
-            self._xpu_sync_affected_devices(tag)
+            self._sync_affected_devices(tag)
 
-    def _xpu_sync_affected_devices(self, tag: Optional[str]):
-        for device in self._xpu_affected_devices(tag):
+    def _sync_affected_devices(self, tag: Optional[str]):
+        for device in self._affected_devices(tag):
             self._device_module.synchronize(device)
 
-    def _xpu_affected_devices(self, tag: Optional[str]) -> list[int]:
+    def _affected_devices(self, tag: Optional[str]) -> list[int]:
         """Device ids the XPU backend will unmap/remap for `tag` (authoritative).
 
-        XPU only (callers guard on _is_xpu). Queries tms_xpu_affected_devices,
+        XPU only (callers guard on _is_xpu). Queries tms_affected_devices,
         which reads the live allocation map under the allocator lock -- exactly
         what xpu_pause/xpu_resume iterate.
         """
@@ -363,7 +363,7 @@ class _TorchMemorySaverImpl:
         capacity = 0
         while True:
             buf = (ctypes.c_int * capacity)() if capacity else None
-            count = int(cdll.tms_xpu_affected_devices(tag_bytes, buf, capacity))
+            count = int(cdll.tms_affected_devices(tag_bytes, buf, capacity))
             if count <= capacity:
                 return [int(buf[i]) for i in range(count)] if capacity else []
             capacity = count

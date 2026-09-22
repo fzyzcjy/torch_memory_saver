@@ -190,6 +190,10 @@ int tms_resume(const char* tag) {
     return static_cast<int>(TorchMemorySaver::instance().resume(tag_str));
 }
 
+uint32_t tms_affected_devices(const char* tag, int* out_device_ids, uint32_t capacity) {
+    return TorchMemorySaver::instance().affected_devices(tag, out_device_ids, capacity);
+}
+
 uint8_t* tms_get_cpu_backup_pointer(const uint8_t* gpu_ptr, uint64_t size) {
     return TorchMemorySaver::instance().get_cpu_backup_pointer(gpu_ptr, size);
 }
@@ -213,10 +217,6 @@ uint64_t tms_xpu_leaked_bytes(int device_id) {
 
 uint64_t tms_xpu_tracked_bytes(int device_id) {
     return TorchMemorySaver::instance().xpu_tracked_bytes(device_id);
-}
-
-uint32_t tms_xpu_affected_devices(const char* tag, int* out_device_ids, uint32_t capacity) {
-    return TorchMemorySaver::instance().xpu_affected_devices(tag, out_device_ids, capacity);
 }
 
 // Test-only: returns the error instead of aborting, so fault injection can observe it.

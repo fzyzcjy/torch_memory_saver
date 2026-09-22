@@ -49,14 +49,6 @@ namespace XPUImplementation {
     );
 
 
-    uint32_t xpu_affected_devices(
-        const char *tag,
-        int *out_device_ids,
-        uint32_t capacity,
-        std::unordered_map<void *, AllocationMetadata> &allocation_metadata,
-        std::mutex &allocator_metadata_mutex
-    );
-
     void xpu_prewarm_devices(int n_devices);
 
     uint64_t xpu_device_free_bytes(int device_id);

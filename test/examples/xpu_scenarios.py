@@ -395,7 +395,7 @@ def _used_gib(mod, d):
 
 def run_multi_device_sync(hook_mode: str):
     """pause()/resume() drain EXACTLY the devices the backend will unmap, incl.
-    non-current ones: _xpu_affected_devices reads the same allocation map they
+    non-current ones: _affected_devices reads the same allocation map they
     iterate, so the drain set cannot drift (needs >=2 devices).
 
     Pre-fix pause() synced only the CURRENT device while unmapping the tag on every
@@ -417,8 +417,8 @@ def run_multi_device_sync(hook_mode: str):
     torch_memory_saver._ensure_initialized()
     impl = torch_memory_saver._impl
     cdll = impl._binary_wrapper.cdll
-    assert hasattr(cdll, "tms_xpu_affected_devices"), (
-        "backend missing tms_xpu_affected_devices; rebuild the XPU extension"
+    assert hasattr(cdll, "tms_affected_devices"), (
+        "backend missing tms_affected_devices; rebuild the extension"
     )
 
     d0, d1 = 0, 1
@@ -433,13 +433,13 @@ def run_multi_device_sync(hook_mode: str):
         c = torch.full((1024,), 1.0, dtype=torch.float32, device=f"{device}:{d1}")
 
     mod.set_device(d0)
-    aff_t = sorted(impl._xpu_affected_devices("t"))
+    aff_t = sorted(impl._affected_devices("t"))
     assert aff_t == [d0, d1], f"affected devices for 't' should be [0, 1], got {aff_t}"
 
-    aff_only1 = sorted(impl._xpu_affected_devices("only1"))
+    aff_only1 = sorted(impl._affected_devices("only1"))
     assert aff_only1 == [d1], f"affected devices for 'only1' should be [1], got {aff_only1}"
 
-    aff_all = sorted(impl._xpu_affected_devices(None))
+    aff_all = sorted(impl._affected_devices(None))
     assert aff_all == [d0, d1], f"affected devices for all should be [0, 1], got {aff_all}"
 
     alloc0, alloc1 = _used_gib(mod, d0), _used_gib(mod, d1)
