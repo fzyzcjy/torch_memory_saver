@@ -4,6 +4,7 @@
 #include "api_forwarder.h"
 
 #include <algorithm>
+#include <set>
 
 TorchMemorySaver::TorchMemorySaver()
     : disk_backend_(compute_disk_backup_dir_from_env(), compute_disk_chunk_bytes_from_env()) {
@@ -160,22 +161,18 @@ uint64_t TorchMemorySaver::xpu_tracked_bytes(int device_id) {
 uint32_t TorchMemorySaver::affected_devices(const char* tag, int* out_device_ids, uint32_t capacity) {
     const std::lock_guard<std::mutex> lock(allocator_metadata_mutex_);
     const bool all = (tag == nullptr || tag[0] == '\0');
-    std::vector<int> devices;
+    std::set<int> devices;
     for (const auto &kv : allocation_metadata_) {
         const AllocationMetadata &metadata = kv.second;
         if (!all && metadata.tag != tag)
             continue;
-        int dev = (int)metadata.device;
-        if (std::find(devices.begin(), devices.end(), dev) == devices.end())
-            devices.push_back(dev);
+        devices.insert(static_cast<int>(metadata.device));
     }
-    std::sort(devices.begin(), devices.end());
+    const auto count = static_cast<uint32_t>(devices.size());
     if (out_device_ids != nullptr) {
-        uint32_t n = std::min<uint32_t>(capacity, (uint32_t)devices.size());
-        for (uint32_t i = 0; i < n; i++)
-            out_device_ids[i] = devices[i];
+        std::copy_n(devices.begin(), std::min(capacity, count), out_device_ids);
     }
-    return (uint32_t)devices.size();
+    return count;
 }
 
 cudaError_t TorchMemorySaver::pause(const std::string& tag) {

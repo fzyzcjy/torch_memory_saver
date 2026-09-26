@@ -352,21 +352,15 @@ class _TorchMemorySaverImpl:
             self._device_module.synchronize(device)
 
     def _affected_devices(self, tag: Optional[str]) -> list[int]:
-        """Device ids the XPU backend will unmap/remap for `tag` (authoritative).
-
-        XPU only (callers guard on _is_xpu). Queries tms_affected_devices,
-        which reads the live allocation map under the allocator lock -- exactly
-        what xpu_pause/xpu_resume iterate.
-        """
-        cdll = self._binary_wrapper.cdll
-        tag_bytes = tag.encode("utf-8") if tag else None
-        capacity = 0
-        while True:
-            buf = (ctypes.c_int * capacity)() if capacity else None
-            count = int(cdll.tms_affected_devices(tag_bytes, buf, capacity))
-            if count <= capacity:
-                return [int(buf[i]) for i in range(count)] if capacity else []
-            capacity = count
+        """Read tag-filtered device ids from the backend's locked allocation map."""
+        device_ids = (ctypes.c_int * 64)()
+        count = self._binary_wrapper.cdll.tms_affected_devices(
+            tag.encode("utf-8") if tag else None,
+            device_ids,
+            len(device_ids),
+        )
+        assert count <= len(device_ids), "Too many affected devices"
+        return device_ids[:count]
 
     def get_cpu_backup(self, x: torch.Tensor, zero_copy: bool = False):
         assert x.is_cuda or x.is_xpu, f"{x.device=}"
