@@ -3,7 +3,6 @@
 
 #if defined(USE_XPU)
 
-#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -430,32 +429,6 @@ cudaError_t xpu_resume(
       first_err = cudaErrorMemoryAllocation;
   }
   return first_err;
-}
-
-uint32_t xpu_affected_devices(
-    const char *tag,
-    int *out_device_ids,
-    uint32_t capacity,
-    std::unordered_map<void *, AllocationMetadata> &allocation_metadata,
-    std::mutex &allocator_metadata_mutex) {
-  const std::lock_guard<std::mutex> lock(allocator_metadata_mutex);
-  const bool all = (tag == nullptr || tag[0] == '\0');
-  std::vector<int> devices;
-  for (const auto &kv : allocation_metadata) {
-    const AllocationMetadata &metadata = kv.second;
-    if (!all && metadata.tag != tag)
-      continue;
-    int dev = (int)metadata.device;
-    if (std::find(devices.begin(), devices.end(), dev) == devices.end())
-      devices.push_back(dev);
-  }
-  std::sort(devices.begin(), devices.end());
-  if (out_device_ids != nullptr) {
-    uint32_t n = std::min<uint32_t>(capacity, (uint32_t)devices.size());
-    for (uint32_t i = 0; i < n; i++)
-      out_device_ids[i] = devices[i];
-  }
-  return (uint32_t)devices.size();
 }
 
 void xpu_prewarm_devices(int n_devices) {

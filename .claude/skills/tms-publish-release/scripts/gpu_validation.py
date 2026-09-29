@@ -26,6 +26,7 @@ app = typer.Typer(add_completion=False)
 _PROXY_URL = "http://127.0.0.1:7890"
 _COMMAND_TIMEOUT_SECONDS = 7200
 _RUNTIME_TEST_MODULES = (
+    "test_affected_devices.py",
     "test_configure_subprocess.py",
     "test_examples.py",
     "test_preload_hook_loader.py",
@@ -46,6 +47,7 @@ _EXPECTED_SINGLE_GPU_SKIPS = (
         for test_name in (
             "test_cpu_backup_multi_device_mmap_restore",
             "test_multi_device",
+            "test_pause_inflight_multi_device",
         )
         for hook_mode in ("preload", "torch")
     ),
@@ -104,7 +106,7 @@ python -m pip install --no-cache-dir pytest==8.3.5 nvidia-ml-py==12.570.86
 python -m pip install --no-deps "/workspace/dist/torch_memory_saver-${TMS_RELEASE_VERSION}-cp39-abi3-manylinux2014_x86_64.whl"
 mkdir -p /validation/test
 cp -a /workspace/test/examples /validation/test/examples
-cp /workspace/test/test_configure_subprocess.py /workspace/test/test_examples.py /workspace/test/test_preload_hook_loader.py /workspace/test/test_utils.py /validation/test/
+cp /workspace/test/test_affected_devices.py /workspace/test/test_configure_subprocess.py /workspace/test/test_examples.py /workspace/test/test_preload_hook_loader.py /workspace/test/test_utils.py /validation/test/
 cp /workspace/.claude/skills/tms-publish-release/scripts/pytest_skip_gate.py /validation/pytest_skip_gate.py
 cd /validation
 python -c 'from pathlib import Path; import torch_memory_saver; path=Path(torch_memory_saver.__file__); print(path); assert "site-packages" in path.parts'
@@ -118,7 +120,7 @@ python3 -m pip install --break-system-packages --only-binary=:all: --no-cache-di
 python3 -m pip install --break-system-packages --no-deps "/workspace/dist/torch_memory_saver-${TMS_RELEASE_VERSION}-cp39-abi3-manylinux2014_aarch64.whl"
 mkdir -p /validation/test
 cp -a /workspace/test/examples /validation/test/examples
-cp /workspace/test/test_configure_subprocess.py /workspace/test/test_examples.py /workspace/test/test_preload_hook_loader.py /workspace/test/test_utils.py /validation/test/
+cp /workspace/test/test_affected_devices.py /workspace/test/test_configure_subprocess.py /workspace/test/test_examples.py /workspace/test/test_preload_hook_loader.py /workspace/test/test_utils.py /validation/test/
 cp /workspace/.claude/skills/tms-publish-release/scripts/pytest_skip_gate.py /validation/pytest_skip_gate.py
 cd /validation
 python3 - <<'PY'

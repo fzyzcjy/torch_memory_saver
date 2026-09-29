@@ -67,6 +67,7 @@ public:
 
     cudaError_t pause(const std::string& tag);
     cudaError_t resume(const std::string& tag);
+    uint32_t affected_devices(const char* tag, int* out_device_ids, uint32_t capacity);
     void set_memory_margin_bytes(uint64_t value) {
 #if defined(USE_XPU)
         if (value != 0) {
@@ -97,7 +98,6 @@ public:
     uint64_t xpu_committed_bytes(int device_id);
     uint64_t xpu_leaked_bytes(int device_id);
     uint64_t xpu_tracked_bytes(int device_id);
-    uint32_t xpu_affected_devices(const char* tag, int* out_device_ids, uint32_t capacity);
 #endif
 
 private:

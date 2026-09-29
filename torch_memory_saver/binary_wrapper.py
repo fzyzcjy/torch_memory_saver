@@ -49,6 +49,12 @@ def _setup_function_signatures(cdll):
     cdll.tms_pause.restype = ctypes.c_int
     cdll.tms_resume.argtypes = [ctypes.c_char_p]
     cdll.tms_resume.restype = ctypes.c_int
+    cdll.tms_affected_devices.argtypes = [
+        ctypes.c_char_p,
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.c_uint32,
+    ]
+    cdll.tms_affected_devices.restype = ctypes.c_uint32
     cdll.set_memory_margin_bytes.argtypes = [ctypes.c_uint64]
     cdll.tms_set_retain_cpu_backup.argtypes = [ctypes.c_bool]
     cdll.tms_get_retain_cpu_backup.restype = ctypes.c_bool
@@ -74,10 +80,3 @@ def _setup_function_signatures(cdll):
     if hasattr(cdll, "tms_xpu_free"):
         cdll.tms_xpu_free.argtypes = [ctypes.c_void_p]
         cdll.tms_xpu_free.restype = ctypes.c_int
-    if hasattr(cdll, "tms_xpu_affected_devices"):
-        cdll.tms_xpu_affected_devices.argtypes = [
-            ctypes.c_char_p,
-            ctypes.POINTER(ctypes.c_int),
-            ctypes.c_uint32,
-        ]
-        cdll.tms_xpu_affected_devices.restype = ctypes.c_uint32
