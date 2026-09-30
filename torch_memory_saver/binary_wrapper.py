@@ -45,6 +45,8 @@ def _setup_function_signatures(cdll):
     cdll.tms_set_enable_disk_backup.argtypes = [ctypes.c_bool]
     cdll.tms_get_enable_disk_backup.restype = ctypes.c_bool
     cdll.tms_set_disk_backup_dir.argtypes = [ctypes.c_char_p]
+    cdll.tms_keep_resident.argtypes = [ctypes.c_void_p]
+    cdll.tms_keep_resident.restype = ctypes.c_uint64
     cdll.tms_pause.argtypes = [ctypes.c_char_p]
     cdll.tms_pause.restype = ctypes.c_int
     cdll.tms_resume.argtypes = [ctypes.c_char_p]

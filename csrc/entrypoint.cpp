@@ -180,6 +180,15 @@ bool tms_get_retain_cpu_backup() {
 #endif
 }
 
+uint64_t tms_keep_resident(const void* ptr) {
+#ifdef USE_CUDA
+    return TorchMemorySaver::instance().keep_resident(ptr);
+#else
+    SIMPLE_CHECK(false, "keep_resident is CUDA-only");
+    return 0;
+#endif
+}
+
 int tms_pause(const char* tag) {
     std::string tag_str = (tag != nullptr) ? std::string(tag) : "";
     return static_cast<int>(TorchMemorySaver::instance().pause(tag_str));

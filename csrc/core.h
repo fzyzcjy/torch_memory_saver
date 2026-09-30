@@ -49,6 +49,9 @@ struct AllocationMetadata {
     size_t allocation_size;
     CUmemGenericAllocationHandle allocHandle;
 #endif
+#ifdef USE_CUDA
+    bool keep_resident = false;
+#endif
 };
 
 class TorchMemorySaver {
@@ -67,6 +70,9 @@ public:
 
     cudaError_t pause(const std::string& tag);
     cudaError_t resume(const std::string& tag);
+#ifdef USE_CUDA
+    uint64_t keep_resident(const void* query_ptr);
+#endif
     uint32_t affected_devices(const char* tag, int* out_device_ids, uint32_t capacity);
     void set_memory_margin_bytes(uint64_t value) {
 #if defined(USE_XPU)

@@ -80,6 +80,29 @@ class TorchMemorySaver:
         with self._impl.disable():
             yield
 
+    def keep_resident(self, tensor: torch.Tensor) -> int:
+        """Keep a CUDA tensor's backing stable across all pause/resume calls.
+
+        Call before registering memory with an external user such as NCCL.
+        Protects the entire containing allocator allocation, including other
+        tensors sharing it, until that allocation is freed (not merely until
+        the tensor is deleted). Does not extend the tensor's lifetime.
+        There is no unpin operation: the caller owns registration retirement.
+
+        Returns the allocation size, or zero for unmanaged/empty tensors.
+        Repeated calls and views of the same allocation return the same size;
+        these values must not be summed as distinct resident allocations.
+        The allocation must be active. CUDA only.
+        """
+        if torch.version.cuda is None:
+            raise NotImplementedError("keep_resident is CUDA-only")
+        if tensor.device.type != "cuda":
+            raise ValueError("keep_resident requires a CUDA tensor")
+        if tensor.numel() == 0:
+            return 0
+        self._ensure_initialized()
+        return self._impl._binary_wrapper.cdll.tms_keep_resident(tensor.data_ptr())
+
     def pause(self, tag: Optional[str] = None):
         """Pause memory for specific tag or all memory if tag is None"""
         self._ensure_initialized()

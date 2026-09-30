@@ -54,10 +54,21 @@ API: Change `torch.cuda.graph(...)` to `torch_memory_saver.cuda_graph(...)`
 
 If a retained CUDA graph contains NCCL operations on TMS-managed buffers, NCCL
 graph registrations can become stale when TMS replaces the buffers' physical
-backing during `pause()` / `resume()`, and graph replay may hang
-([#88](https://github.com/fzyzcjy/torch_memory_saver/issues/88)). Either keep
-buffers passed to NCCL operations outside TMS-managed regions, or disable NCCL
-graph user-buffer registration before starting the workload:
+backing during `pause()` / `resume()`, and graph replay may return incorrect data or hang
+([#88](https://github.com/fzyzcjy/torch_memory_saver/issues/88)). On CUDA, call
+`torch_memory_saver.keep_resident(tensor)` on every send and receive buffer
+before NCCL captures/registers it. This keeps its physical backing stable even
+across `pause()` without a tag. Views protect the entire containing allocator
+allocation, including neighboring tensors; it remains resident until the
+allocator frees that allocation. Deleting one tensor or resetting one graph
+may not free a cached allocation. Ordinary allocations still offload normally.
+The call is idempotent, returns the containing allocation's bytes (zero for
+unmanaged/empty tensors), and does not extend the tensor's lifetime. Keep the
+buffers alive until their graphs/registrations are retired. This API does not
+automatically discover external registrations or release their lifetime.
+
+Alternatively, allocate communication buffers outside TMS-managed regions,
+or disable NCCL graph user-buffer registration before starting the workload:
 
 ```bash
 export NCCL_GRAPH_REGISTER=0

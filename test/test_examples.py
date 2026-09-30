@@ -23,6 +23,7 @@ from examples import (
     training_engine,
     nested_region,
     pause_inflight,
+    keep_resident,
     xpu_scenarios,
 )
 
@@ -48,6 +49,26 @@ _multi_device_only = pytest.mark.skipif(
 @pytest.mark.parametrize("hook_mode", _HOOK_MODES)
 def test_simple(hook_mode):
     _test_core(simple.run, hook_mode=hook_mode)
+
+
+@pytest.mark.skipif(torch.version.cuda is None, reason="keep_resident is CUDA-only")
+@pytest.mark.parametrize("hook_mode", ["preload", "torch"])
+def test_keep_resident(hook_mode):
+    _test_core(keep_resident.run, hook_mode=hook_mode)
+
+
+@pytest.mark.skipif(torch.version.cuda is None, reason="keep_resident is CUDA-only")
+@pytest.mark.parametrize("hook_mode", ["preload", "torch"])
+def test_keep_resident_rejects_paused(hook_mode):
+    ctx = torch_memory_saver.configure_subprocess() if hook_mode == "preload" else nullcontext()
+    with ctx:
+        result = subprocess.run(
+            [sys.executable, keep_resident.__file__, hook_mode],
+            env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
+            capture_output=True, text=True, timeout=30,
+        )
+    assert result.returncode != 0
+    assert "keep_resident requires an active allocation" in result.stderr
 
 
 @_skip_on_xpu

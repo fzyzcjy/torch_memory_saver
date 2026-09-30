@@ -175,6 +175,26 @@ uint32_t TorchMemorySaver::affected_devices(const char* tag, int* out_device_ids
     return count;
 }
 
+#ifdef USE_CUDA
+uint64_t TorchMemorySaver::keep_resident(const void* query_ptr) {
+    const std::lock_guard<std::mutex> lock(allocator_metadata_mutex_);
+    const auto query = reinterpret_cast<uintptr_t>(query_ptr);
+    for (auto &kv : allocation_metadata_) {
+        const auto base = reinterpret_cast<uintptr_t>(kv.first);
+        AllocationMetadata &metadata = kv.second;
+        if (query >= base && query - base < metadata.raw_size) {
+            SIMPLE_CHECK(metadata.state == AllocationState::ACTIVE,
+                         "keep_resident requires an active allocation");
+            // External registrations refer to this backing, not just its VA.
+            // Only freeing the allocator allocation ends this residency.
+            metadata.keep_resident = true;
+            return metadata.allocation_size;
+        }
+    }
+    return 0;
+}
+#endif
+
 cudaError_t TorchMemorySaver::pause(const std::string& tag) {
 #if TMS_ROCM_LEGACY_CHUNKED
     ROCmHIPImplementation::rocm_pause(tag, allocation_metadata_, allocator_metadata_mutex_);
@@ -193,6 +213,12 @@ cudaError_t TorchMemorySaver::pause(const std::string& tag) {
         if (!tag.empty() && metadata.tag != tag) {
             continue;
         }
+
+#ifdef USE_CUDA
+        if (metadata.keep_resident) {
+            continue;
+        }
+#endif
 
         if (metadata.state != AllocationState::ACTIVE) {
             std::cerr << "[torch_memory_saver.cpp] Cannot pause allocation that is not active."
@@ -245,6 +271,12 @@ cudaError_t TorchMemorySaver::resume(const std::string& tag) {
         if (!tag.empty() && metadata.tag != tag) {
             continue;
         }
+
+#ifdef USE_CUDA
+        if (metadata.keep_resident) {
+            continue;
+        }
+#endif
 
         if (metadata.state != AllocationState::PAUSED) {
             std::cerr << "[torch_memory_saver.cpp] Cannot resume allocation that is not paused. "
