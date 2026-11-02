@@ -180,6 +180,30 @@ bool tms_get_retain_cpu_backup() {
 #endif
 }
 
+void tms_set_cpu_backup_pool_max_bytes(int64_t value) {
+#if defined(USE_CUDA)
+    cpu_backuper::set_pool_max_bytes(value);
+#else
+    SIMPLE_CHECK(value == 0, "CPU backup slot pool is CUDA-only");
+#endif
+}
+
+int64_t tms_get_cpu_backup_pool_max_bytes() {
+#if defined(USE_CUDA)
+    return cpu_backuper::pool_max_bytes();
+#else
+    return 0;
+#endif
+}
+
+uint64_t tms_get_cpu_backup_pool_bytes() {
+#if defined(USE_CUDA)
+    return static_cast<uint64_t>(cpu_backuper::pool_total_bytes());
+#else
+    return 0;
+#endif
+}
+
 int tms_pause(const char* tag) {
     std::string tag_str = (tag != nullptr) ? std::string(tag) : "";
     return static_cast<int>(TorchMemorySaver::instance().pause(tag_str));

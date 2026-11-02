@@ -165,6 +165,50 @@ def run(hook_mode: str):
                 _assert_cpu_backup_released_on_allocation_free(device=device_id, paused=False)
                 _assert_cpu_backup_released_on_allocation_free(device=device_id, paused=True)
 
+    # Slot pool: a non-retaining resume returns the host backup to the pool,
+    # and the next pause reuses the same buffer instead of paying
+    # cudaMallocHost / mmap first-touch again (issue #111). CUDA-only.
+    if device == "cuda" and not torch.version.hip:
+        assert torch_memory_saver.cpu_backup_pool_max_bytes == 0
+        for pool_backend in ["pinned", "mmap"]:
+            pool_tag = f"pool_reuse_{pool_backend}"
+            pool_expected = _make_pattern(size=4096, offset=200)
+            torch_memory_saver.cpu_backup_pool_max_bytes = -1
+            with torch_memory_saver.region(
+                tag=pool_tag, enable_cpu_backup=True, cpu_backup_backend=pool_backend
+            ):
+                pooled = pool_expected.to(device)
+
+            torch_memory_saver.pause(tag=pool_tag)
+            first_backup = torch_memory_saver.get_cpu_backup(pooled, zero_copy=True)
+            first_pointer = first_backup.data_ptr()
+            assert torch.equal(first_backup, pool_expected)
+            del first_backup
+            torch_memory_saver.resume(tag=pool_tag)
+            assert torch_memory_saver.get_cpu_backup(pooled) is None
+            # The backup size follows the allocator's block, not the tensor's
+            # logical bytes (torch rounds small allocations up), so compare
+            # against the observed pooled size instead of a constant.
+            pooled_bytes = torch_memory_saver.get_cpu_backup_pool_bytes()
+            assert pooled_bytes >= pool_expected.nbytes
+
+            torch_memory_saver.pause(tag=pool_tag)
+            assert torch_memory_saver.get_cpu_backup_pool_bytes() == 0
+            second_backup = torch_memory_saver.get_cpu_backup(pooled, zero_copy=True)
+            assert second_backup.data_ptr() == first_pointer
+            assert torch.equal(second_backup, pool_expected)
+            del second_backup
+            torch_memory_saver.resume(tag=pool_tag)
+            assert torch_memory_saver.get_cpu_backup_pool_bytes() == pooled_bytes
+
+            # Lowering the cap to 0 evicts pooled slots for real.
+            torch_memory_saver.cpu_backup_pool_max_bytes = 0
+            assert torch_memory_saver.get_cpu_backup_pool_bytes() == 0
+            if pool_backend == "pinned":
+                assert not _cuda_host_pointer_is_allocated(first_pointer)
+            del pooled, pool_expected
+            empty_cache()
+
 
 def run_retain_from_env(hook_mode: str):
     torch_memory_saver.hook_mode = hook_mode
