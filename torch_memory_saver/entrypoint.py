@@ -195,13 +195,22 @@ class _TorchMemorySaverImpl:
             # MusaMemPool.use() temporarily replaces the process-global
             # empty_cache, so overlapping disable() scopes are unsupported.
             self._musa_disable_lock = threading.Lock()
-            self._musa_region_depth = threading.local()
+            self._musa_region_depth_local = threading.local()
 
         _sanity_checks()
         if torch.version.hip or self._is_xpu:
             # HIP/SYCL runtime static dtors may run before MemPool's at exit
             # (destruction-order fiasco); free pools via atexit while runtime alive.
             atexit.register(self._mem_pools.clear)
+
+    @property
+    def _musa_region_depth(self) -> int:
+        """region() nesting depth on the calling thread (MUSA only)."""
+        return getattr(self._musa_region_depth_local, "value", 0)
+
+    @_musa_region_depth.setter
+    def _musa_region_depth(self, depth: int) -> None:
+        self._musa_region_depth_local.value = depth
 
     @contextmanager
     def region(
@@ -259,7 +268,7 @@ class _TorchMemorySaverImpl:
         cpu_backup_backend: Optional[CpuBackupBackend],
     ):
         assert self._hook_mode == "preload", "Only hook_mode=preload supports pauseable CUDA Graph currently"
-        # torch.cuda on CUDA/ROCm, torch.musa on MUSA.
+
         with self._device_module.graph(cuda_graph, pool=pool, stream=stream, capture_error_mode=capture_error_mode):
             with self._with_region_config(
                 tag=tag,
@@ -291,18 +300,17 @@ class _TorchMemorySaverImpl:
             cpu_backup_backend=cpu_backup_backend,
             enable_disk_backup=enable_disk_backup,
         )
-        # Track nesting on MUSA so disable() rejects a region-enclosed scope
-        # instead of nesting two MemPool scopes.
-        musa_region_depth = (
-            getattr(self._musa_region_depth, "value", 0) if self._is_musa else 0
-        )
+
+        if self._is_musa:
+            # Track nesting on MUSA so disable() rejects a region-enclosed scope instead of nesting two MemPool scopes.
+            musa_region_depth = self._musa_region_depth
         try:
             if self._is_musa:
-                self._musa_region_depth.value = musa_region_depth + 1
+                self._musa_region_depth = musa_region_depth + 1
             yield
         finally:
             if self._is_musa:
-                self._musa_region_depth.value = musa_region_depth
+                self._musa_region_depth = musa_region_depth
             assert cdll.tms_get_interesting_region()
             assert cdll.tms_get_enable_cpu_backup() == enable_cpu_backup
             assert (
@@ -326,52 +334,58 @@ class _TorchMemorySaverImpl:
                 "TorchMemorySaver.disable() is not supported on Intel XPU. "
                 "Allocate outside a region() instead of using disable()."
             )
-        if self._is_musa and getattr(self._musa_region_depth, "value", 0) > 0:
+        if self._is_musa:
+            with self._musa_disable(dispose_mem_pool_after_use):
+                yield
+            return
+
+        assert dispose_mem_pool_after_use, "Only dispose_mem_pool_after_use=true is supported now"
+        assert self._binary_wrapper.cdll.tms_get_interesting_region(), "disable() should be called only when tms is active"
+
+        self._binary_wrapper.cdll.tms_set_interesting_region(False)
+        try:
+            # We can either reuse the pool or delete it immediately, and we implement the latter currently since Slime uses it.
+            # About why we need a pool: https://github.com/fzyzcjy/torch_memory_saver/pull/20#issuecomment-3047099047
+            pool = self._device_module.MemPool()
+            with self._device_module.use_mem_pool(pool):
+                yield
+            del pool
+        finally:
+            self._binary_wrapper.cdll.tms_set_interesting_region(True)
+
+    @contextmanager
+    def _musa_disable(self, dispose_mem_pool_after_use: bool = True):
+        """disable() on MUSA, where the pool needs an explicit release and
+        MusaMemPool.use() temporarily replaces the process-global empty_cache."""
+        from .musa_pool import MusaMemPool
+
+        if self._musa_region_depth > 0:
             raise RuntimeError(
                 "TorchMemorySaver.disable() cannot be used inside a region() on MUSA: "
                 "the two MemPool scopes cannot be nested"
             )
-
-        # The MUSA empty_cache shim (installed by MusaMemPool.use) is
-        # process-global, so overlapping scopes would restore it in the wrong
-        # order.
-        if self._is_musa and not self._musa_disable_lock.acquire(blocking=False):
+        # The empty_cache shim is process-global, so overlapping scopes would
+        # restore it in the wrong order.
+        if not self._musa_disable_lock.acquire(blocking=False):
             raise RuntimeError(
                 "TorchMemorySaver.disable() cannot be nested or called concurrently on MUSA"
             )
-
-        musa_pool = None
-        pool = None
-        tms_disabled = False
         try:
             assert dispose_mem_pool_after_use, "Only dispose_mem_pool_after_use=true is supported now"
             assert self._binary_wrapper.cdll.tms_get_interesting_region(), "disable() should be called only when tms is active"
 
             self._binary_wrapper.cdll.tms_set_interesting_region(False)
-            tms_disabled = True
             try:
-                # About why we need a pool: https://github.com/fzyzcjy/torch_memory_saver/pull/20#issuecomment-3047099047
-                if self._is_musa:
-                    from .musa_pool import MusaMemPool
-
-                    musa_pool = MusaMemPool()
-                    pool_context = musa_pool.use()
-                else:
-                    pool = self._device_module.MemPool()
-                    pool_context = self._device_module.use_mem_pool(pool)
-                with pool_context:
-                    yield
+                musa_pool = MusaMemPool()
+                try:
+                    with musa_pool.use():
+                        yield
+                finally:
+                    musa_pool.release()
             finally:
-                if self._is_musa:
-                    if musa_pool is not None:
-                        musa_pool.release()
-                else:
-                    del pool
-        finally:
-            if tms_disabled:
                 self._binary_wrapper.cdll.tms_set_interesting_region(True)
-            if self._is_musa:
-                self._musa_disable_lock.release()
+        finally:
+            self._musa_disable_lock.release()
 
     def pause(self, tag: Optional[str]):
         self._sync_affected_devices(tag)
