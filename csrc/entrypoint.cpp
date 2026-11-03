@@ -165,15 +165,15 @@ void set_memory_margin_bytes(uint64_t value) {
 }
 
 void tms_set_retain_cpu_backup(bool retain_cpu_backup) {
-#ifndef USE_CUDA
-    SIMPLE_CHECK(!retain_cpu_backup, "retained CPU backup policy is CUDA-only");
+#if !TMS_SUPPORTS_RETAIN_CPU_BACKUP
+    SIMPLE_CHECK(!retain_cpu_backup, "retained CPU backup policy needs CUDA or ROCm 7+");
 #else
     TorchMemorySaver::instance().set_retain_cpu_backup(retain_cpu_backup);
 #endif
 }
 
 bool tms_get_retain_cpu_backup() {
-#ifndef USE_CUDA
+#if !TMS_SUPPORTS_RETAIN_CPU_BACKUP
     return false;
 #else
     return TorchMemorySaver::instance().get_retain_cpu_backup();

@@ -8,7 +8,7 @@
 
 TorchMemorySaver::TorchMemorySaver()
     : disk_backend_(compute_disk_backup_dir_from_env(), compute_disk_chunk_bytes_from_env()) {
-#ifdef USE_CUDA
+#if TMS_SUPPORTS_RETAIN_CPU_BACKUP
     retain_cpu_backup_.store(get_bool_env_var("TMS_RETAIN_CPU_BACKUP"));
 #endif
 }
