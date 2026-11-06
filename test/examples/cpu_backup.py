@@ -8,7 +8,7 @@ from ctypes.util import find_library
 import torch
 
 from torch_memory_saver import torch_memory_saver
-from torch_memory_saver.testing_utils import empty_cache, get_device, get_device_module
+from torch_memory_saver.testing_utils import empty_cache, get_device, get_device_module, is_mlu
 
 
 def run(hook_mode: str):
@@ -20,7 +20,7 @@ def run(hook_mode: str):
 
     # Pause/resume keeps backup contents; without backup, contents are lost.
     # mmap is unavailable on ROCm; XPU does not take a backend.
-    if device in ("cuda", "musa") and not torch.version.hip:
+    if device in ("cuda", "musa", "mlu") and not torch.version.hip:
         backends = ["mmap", "pinned"]
     else:
         backends = [None]
@@ -51,15 +51,21 @@ def run(hook_mode: str):
         torch_memory_saver.resume()
 
         assert tensor_with_backup[:3].tolist() == [10, 10, 10]
-        assert tensor_without_backup[:3].tolist() != [20, 20, 20]
-        # ROCm retains host backup across resume; CUDA/XPU/MUSA release it.
+        if is_mlu():
+            # CNDriver may reuse the same physical pages. Unbacked contents
+            # are unspecified; verify the restored allocation is writable.
+            tensor_without_backup.fill_(37)
+            assert torch.all(tensor_without_backup == 37).item()
+        else:
+            assert tensor_without_backup[:3].tolist() != [20, 20, 20]
+        # ROCm retains host backup across resume; CUDA, MUSA, MLU and XPU release it.
         if not torch.version.hip:
             assert torch_memory_saver.get_cpu_backup(typed_tensor_with_backup) is None
 
         del tensor_with_backup, typed_tensor_with_backup, tensor_without_backup, tensor_unrelated
         empty_cache()
 
-    if device in ("cuda", "musa") and not torch.version.hip:
+    if device in ("cuda", "musa", "mlu") and not torch.version.hip:
         # Pageable H2D must finish before resume returns (non-default stream).
         n = 64 * 1024 * 1024
         with torch_memory_saver.region(enable_cpu_backup=True, cpu_backup_backend="mmap"):
@@ -103,7 +109,7 @@ def run(hook_mode: str):
 
     # Tags remain independent, and retained host storage is reused at the same
     # address while its bytes are refreshed. Exercise every visible device.
-    if device == "cuda" and not torch.version.hip:
+    if device in ("cuda", "mlu") and not torch.version.hip:
         for device_id in range(mod.device_count()):
             with mod.device(device_id):
                 selected_expected = _make_pattern(size=1024, offset=40 + device_id)
@@ -375,6 +381,8 @@ def _assert_cpu_backup_released_on_allocation_free(device: int, paused: bool) ->
 
 
 def _host_pointer_is_allocated(pointer: int) -> bool:
+    if is_mlu():
+        return _mlu_host_pointer_is_allocated(pointer)
     musa = get_device() == "musa"
     prefix = "hip" if torch.version.hip else "musa" if musa else "cuda"
     # torch loads libmusart without global visibility, so bind it directly on MUSA.
@@ -395,6 +403,29 @@ def _host_pointer_is_allocated(pointer: int) -> bool:
     if status != 0:
         get_last_error()
     return status == 0
+
+
+def _mlu_host_pointer_is_allocated(pointer: int) -> bool:
+    class PointerAttributes(ctypes.Structure):
+        _fields_ = [
+            ("type", ctypes.c_int),
+            ("device", ctypes.c_int),
+            ("size", ctypes.c_size_t),
+            ("devicePointer", ctypes.c_void_p),
+            ("hostPointer", ctypes.c_void_p),
+            ("cacheMode", ctypes.c_int),
+            ("deviceBasePointer", ctypes.c_void_p),
+        ]
+
+    get_attributes = torch_memory_saver._impl._binary_wrapper.cdll.cnrtPointerGetAttributes
+    get_attributes.argtypes = [ctypes.POINTER(PointerAttributes), ctypes.c_void_p]
+    get_attributes.restype = ctypes.c_int
+    attributes = PointerAttributes()
+    status = get_attributes(ctypes.byref(attributes), ctypes.c_void_p(pointer))
+    assert status == 0, f"cnrtPointerGetAttributes failed: {status}"
+    # cnrtMemTypeUnregistered = 0, cnrtMemTypeHost = 1.
+    assert attributes.type in (0, 1), attributes.type
+    return attributes.type == 1
 
 
 def _make_pattern(size: int, offset: int) -> torch.Tensor:

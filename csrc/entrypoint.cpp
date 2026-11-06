@@ -111,7 +111,7 @@ void tms_torch_free(void *ptr, ssize_t ssize, int device, cudaStream_t stream) {
               << " ptr=" << ptr << " ssize=" << ssize << " device=" << device << " stream=" << stream
               << std::endl;
 #endif
-#if !defined(USE_XPU)
+#if !defined(USE_XPU) && !defined(USE_MLU)
     SIMPLE_CHECK(thread_local_config.is_interesting_region(), "only support interesting region");
 #endif
     CUDA_ERROR_CHECK(TorchMemorySaver::instance().free(ptr));
@@ -173,15 +173,15 @@ void set_memory_margin_bytes(uint64_t value) {
 }
 
 void tms_set_retain_cpu_backup(bool retain_cpu_backup) {
-#if !defined(USE_CUDA) && !defined(USE_MUSA)
-    SIMPLE_CHECK(!retain_cpu_backup, "retained CPU backup policy is CUDA/MUSA-only");
+#if !defined(USE_CUDA) && !defined(USE_MUSA) && !defined(USE_MLU)
+    SIMPLE_CHECK(!retain_cpu_backup, "retained CPU backup policy is CUDA/MUSA/MLU-only");
 #else
     TorchMemorySaver::instance().set_retain_cpu_backup(retain_cpu_backup);
 #endif
 }
 
 bool tms_get_retain_cpu_backup() {
-#if !defined(USE_CUDA) && !defined(USE_MUSA)
+#if !defined(USE_CUDA) && !defined(USE_MUSA) && !defined(USE_MLU)
     return false;
 #else
     return TorchMemorySaver::instance().get_retain_cpu_backup();

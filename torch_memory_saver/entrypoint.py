@@ -11,7 +11,7 @@ import torch
 
 from .binary_wrapper import BinaryWrapper
 from .hooks.base import HookUtilBase, HookMode
-from .utils import is_musa, is_xpu
+from .utils import is_mlu, is_musa, is_xpu
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class TorchMemorySaver:
 
         cpu_backup_backend selects the host shadow when enable_cpu_backup is True:
         "pinned" (default; cudaMallocHost/hipHostMalloc/musaMallocHost) or "mmap"
-        (reclaimable RSS on CUDA/MUSA). ROCm is pinned-only. XPU uses pageable
+        (reclaimable RSS on CUDA/MUSA/MLU). ROCm is pinned-only. XPU uses pageable
         malloc and does not take cpu_backup_backend.
         """
         self._validate_cpu_backup_backend(enable_cpu_backup, cpu_backup_backend)
@@ -220,6 +220,8 @@ class _TorchMemorySaverImpl:
         enable_disk_backup: bool,
         cpu_backup_backend: Optional[CpuBackupBackend],
     ):
+        if is_mlu():
+            _sanity_checks()
         if self._is_xpu and enable_disk_backup:
             raise NotImplementedError(
                 "TorchMemorySaver disk backup (enable_disk_backup=True) is not "
@@ -268,7 +270,8 @@ class _TorchMemorySaverImpl:
         cpu_backup_backend: Optional[CpuBackupBackend],
     ):
         assert self._hook_mode == "preload", "Only hook_mode=preload supports pauseable CUDA Graph currently"
-
+        if is_mlu():
+            _sanity_checks()
         with self._device_module.graph(cuda_graph, pool=pool, stream=stream, capture_error_mode=capture_error_mode):
             with self._with_region_config(
                 tag=tag,
@@ -426,7 +429,7 @@ class _TorchMemorySaverImpl:
         return device_ids[:count]
 
     def get_cpu_backup(self, x: torch.Tensor, zero_copy: bool = False):
-        assert x.is_cuda or x.is_xpu or (self._is_musa and x.device.type == "musa"), f"{x.device=}"
+        assert x.is_cuda or x.is_xpu or (self._is_musa and x.device.type == "musa") or (is_mlu() and x.device.type == "mlu"), f"{x.device=}"
         assert x.is_contiguous(), f"{x.shape=} {x.stride()=} {x.dtype=}"
 
         nbytes = x.nbytes
@@ -452,10 +455,14 @@ class _TorchMemorySaverImpl:
         return ans
 
 def _sanity_checks():
-    alloc_confs = ["PYTORCH_CUDA_ALLOC_CONF"]
-    if is_musa():
-        alloc_confs.append("PYTORCH_MUSA_ALLOC_CONF")
-    if any("expandable_segments:True" in os.environ.get(name, "") for name in alloc_confs):
+    if is_mlu():
+        expandable_segments = torch.mlu.memory._snapshot()["allocator_settings"]["expandable_segments"]
+    else:
+        alloc_confs = ["PYTORCH_CUDA_ALLOC_CONF"]
+        if is_musa():
+            alloc_confs.append("PYTORCH_MUSA_ALLOC_CONF")
+        expandable_segments = any("expandable_segments:True" in os.environ.get(name, "") for name in alloc_confs)
+    if expandable_segments:
         raise RuntimeError(
             "TorchMemorySaver is disabled for the current process because expandable_segments is not supported yet."
         )

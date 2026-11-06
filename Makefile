@@ -63,3 +63,7 @@ upload:
 	ls -alh dist
 	docker run -it --rm -v $(shell pwd):/app python:3.11 \
 	  /bin/bash -c "pip install twine && python3 -m twine upload /app/dist/*"
+
+.PHONY:build-mlu
+build-mlu:
+	TMS_PLATFORM=mlu pip install --no-build-isolation .

@@ -33,6 +33,8 @@ _RUNTIME_TEST_MODULES = (
     "test_utils.py",
 )
 _BUILD_TOOL_TEST_MODULES = ("test_merge_cuda_wheels.py", "test_setup_rpath.py")
+# Backend-specific tests are classified but not shipped to CUDA validation containers.
+_NON_CUDA_TEST_MODULES = ("test_mlu.py",)
 _MULTI_DEVICE_SKIP_REASON = "Multi-device test requires at least two devices"
 _XPU_SKIP_REASON = "XPU-specific path"
 _LUPINE_SKIP_REASON = (
@@ -323,7 +325,11 @@ def _require_release_wheels(*, config: GpuValidationConfig) -> None:
 def _require_runtime_test_contract(*, release_root: Path) -> None:
     test_dir = release_root / "test"
     actual_modules = {path.name for path in test_dir.glob("test_*.py")}
-    expected_modules = set(_RUNTIME_TEST_MODULES) | set(_BUILD_TOOL_TEST_MODULES)
+    expected_modules = (
+        set(_RUNTIME_TEST_MODULES)
+        | set(_BUILD_TOOL_TEST_MODULES)
+        | set(_NON_CUDA_TEST_MODULES)
+    )
     if actual_modules != expected_modules:
         missing = sorted(expected_modules - actual_modules)
         unclassified = sorted(actual_modules - expected_modules)

@@ -61,6 +61,9 @@
     #define TMS_ROCM_LEGACY_CHUNKED 0
 #endif
 
+#elif defined(USE_MLU)
+#include "hardware_mlu_support.h"
+
 #elif defined(USE_CUDA)
 #include <cuda_runtime_api.h>
 #include <cuda.h>
