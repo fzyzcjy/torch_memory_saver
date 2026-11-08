@@ -17,7 +17,7 @@ import sys
 
 import torch
 from torch_memory_saver import torch_memory_saver
-from torch_memory_saver.testing_utils import get_and_print_gpu_memory
+from torch_memory_saver.testing_utils import get_and_print_gpu_memory, get_device
 
 
 def run(hook_mode: str):
@@ -29,6 +29,7 @@ def run(hook_mode: str):
     logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
 
     SIZE = 10_000_000  # ~40MB in float32
+    device = get_device()
 
     # Helper to read C-level config state
     torch_memory_saver._ensure_initialized()
@@ -42,7 +43,7 @@ def run(hook_mode: str):
     print("✓ Initial state: interesting_region=True, cpu_backup=True, tag=default")
 
     # --- Allocate model weights (default tag, cpu_backup=True) ---
-    model_weight = torch.full((SIZE,), 42.0, dtype=torch.float32, device="cuda")
+    model_weight = torch.full((SIZE,), 42.0, dtype=torch.float32, device=device)
     assert cdll.tms_get_cpu_backup_backend() == b"pinned"
 
     # --- Allocate grad buffer inside nested region (cpu_backup=False) ---
@@ -54,7 +55,7 @@ def run(hook_mode: str):
         assert cdll.tms_get_cpu_backup_backend() == b"pinned"
         print("✓ Inside region: interesting_region=True, cpu_backup=False, tag=grad_buffer")
 
-        grad_buffer = torch.full((SIZE,), 99.0, dtype=torch.float32, device="cuda")
+        grad_buffer = torch.full((SIZE,), 99.0, dtype=torch.float32, device=device)
 
     # Verify state restored after exiting region
     assert cdll.tms_get_interesting_region()
@@ -66,7 +67,7 @@ def run(hook_mode: str):
     if not torch.version.hip:
         with torch_memory_saver.region(enable_cpu_backup=True, cpu_backup_backend="mmap"):
             assert cdll.tms_get_cpu_backup_backend() == b"mmap"
-            _ = torch.full((1024,), 1, dtype=torch.uint8, device="cuda")
+            _ = torch.full((1024,), 1, dtype=torch.uint8, device=device)
         assert cdll.tms_get_cpu_backup_backend() == b"pinned"
 
     mem_before_pause = get_and_print_gpu_memory("Before pause")
@@ -100,7 +101,7 @@ def run(hook_mode: str):
     # --- Verify tag nesting restores state correctly ---
     # After exiting the region(), the tag should be back to default
     # Allocate another tensor - should go to default tag with cpu_backup=True
-    extra_tensor = torch.full((SIZE,), 7.0, dtype=torch.float32, device="cuda")
+    extra_tensor = torch.full((SIZE,), 7.0, dtype=torch.float32, device=device)
 
     torch_memory_saver.pause()
     torch_memory_saver.resume()

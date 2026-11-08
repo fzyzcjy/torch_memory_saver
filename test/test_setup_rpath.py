@@ -48,3 +48,13 @@ def test_hip_extensions_are_untouched(monkeypatch):
     ext_modules = _setup_ext_modules(monkeypatch, "hip")
     for ext in ext_modules:
         assert ext.extra_link_args == [], ext.name
+
+
+def test_musa_extensions_are_unsuffixed(monkeypatch):
+    ext_modules = _setup_ext_modules(monkeypatch, "musa")
+    assert {ext.name for ext in ext_modules} == {
+        "torch_memory_saver_hook_mode_preload",
+        "torch_memory_saver_hook_mode_torch",
+    }
+    for ext in ext_modules:
+        assert ("USE_MUSA", "1") in ext.define_macros, ext.name

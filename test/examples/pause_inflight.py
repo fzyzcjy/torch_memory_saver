@@ -2,13 +2,14 @@ import sys
 
 import torch
 from torch_memory_saver import torch_memory_saver
-from torch_memory_saver.testing_utils import get_device, is_xpu
+from torch_memory_saver.testing_utils import get_device, is_musa, is_xpu
 
 
 def run(hook_mode: str, backup: str, device_count: int):
     assert backup in ("none", "cpu")
     torch_memory_saver.hook_mode = hook_mode
-    if not is_xpu() and not torch.version.hip:
+    if get_device() in ("cuda", "musa") and not torch.version.hip:
+        # Retained host backups keep the pause path honest on CUDA/MUSA.
         torch_memory_saver.retain_cpu_backup = True
     mod = torch.get_device_module()
     mod.set_device(0)
@@ -30,13 +31,13 @@ def run(hook_mode: str, backup: str, device_count: int):
             with mod.stream(stream):
                 buffer.fill_(11)
                 observed.copy_(buffer)
-                if is_xpu():
+                if is_xpu() or is_musa():
                     delay_input = torch.ones((4096, 4096), device=device_type)
                     delay_output = torch.empty_like(delay_input)
                     torch.mm(delay_input, delay_input, out=delay_output)
                     delay_buffers.append((delay_input, delay_output))
                 else:
-                    torch.cuda._sleep(1)
+                    mod._sleep(1)
             mod.synchronize()
             allocations.append((buffer, observed, stream))
 
@@ -63,13 +64,14 @@ def run(hook_mode: str, backup: str, device_count: int):
             with mod.stream(stream):
                 # Waiting on device 0 must not incidentally drain the non-current device.
                 if device == device_count - 1:
-                    if is_xpu():
-                        # XPU has no _sleep; queue warmed-up work without new allocations.
+                    if is_xpu() or is_musa():
+                        # No reliable long-running sleep; queue warmed-up work
+                        # without new allocations.
                         delay_input, delay_output = delay_buffers[device]
                         for _ in range(64):
                             torch.mm(delay_input, delay_input, out=delay_output)
                     else:
-                        torch.cuda._sleep(1_000_000_000)
+                        mod._sleep(1_000_000_000)
                 observed.copy_(buffer)
                 buffer.fill_(after)
 

@@ -42,6 +42,10 @@ build-wheel-multi-cuda-aarch64:
 build-xpu:
 	TMS_PLATFORM=xpu pip install --no-build-isolation .
 
+.PHONY:build-musa
+build-musa:
+	TMS_PLATFORM=musa pip install --no-build-isolation .
+
 .PHONY:build-sdist
 build-sdist:
 	docker run --rm \

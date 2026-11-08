@@ -2,6 +2,9 @@
 #include "utils.h"
 #include "macro.h"
 #include "api_forwarder.h"
+#if defined(USE_MUSA)
+#include "hardware_musa_support.h"
+#endif
 
 #include <algorithm>
 #include <set>
@@ -262,6 +265,16 @@ cudaError_t TorchMemorySaver::resume(const std::string& tag) {
             (CUdeviceptr) ptr, metadata.allocation_size, 0, newAllocHandle, 0));
 
         CUDAUtils::cu_mem_set_access(ptr, metadata.allocation_size, metadata.device);
+
+#if defined(USE_MUSA)
+        // MUSA may hand back non-zero pages for a fresh mapping, so zero a
+        // region that has no backup to restore. Backed regions are overwritten
+        // by onload, and zeroing them first would double the resume traffic.
+        if (!metadata.enable_cpu_backup && !metadata.enable_disk_backup) {
+            MUSAImplementation::zero_region(
+                ptr, metadata.allocation_size, static_cast<int>(metadata.device));
+        }
+#endif
 
         if (metadata.enable_cpu_backup) {
             cpu_backuper::onload(
