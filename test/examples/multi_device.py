@@ -4,7 +4,10 @@ import sys
 import torch
 
 from torch_memory_saver import torch_memory_saver
-from torch_memory_saver.testing_utils import get_and_print_gpu_memory, get_device
+from torch_memory_saver.testing_utils import get_and_print_gpu_memory, get_device, get_device_module
+
+# MUSA mem_get_info jitters by tens of MB, so an untouched device may report less.
+_NOISE_BYTES = 64 * 1024 ** 2 if get_device() == "musa" else 0
 
 
 def run(hook_mode: str):
@@ -12,7 +15,7 @@ def run(hook_mode: str):
     logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
 
     device = get_device()
-    set_device = torch.xpu.set_device if device == "xpu" else torch.cuda.set_device
+    set_device = get_device_module().set_device
 
     checker = _MemoryChecker()
 
@@ -21,22 +24,22 @@ def run(hook_mode: str):
     with torch_memory_saver.region():
         dev0_a = torch.full((100_000_000,), 10, dtype=torch.uint8, device=f'{device}:0')
 
-    checker.check_and_update("alloc dev0_a", min_delta=(80_000_000, 0))
+    checker.check_and_update("alloc dev0_a", min_delta=(80_000_000, -_NOISE_BYTES))
 
     with torch_memory_saver.region():
         dev1_a = torch.full((100_000_000,), 10, dtype=torch.uint8, device=device)
 
-    checker.check_and_update("alloc dev1_a", min_delta=(0, 80_000_000))
+    checker.check_and_update("alloc dev1_a", min_delta=(-_NOISE_BYTES, 80_000_000))
 
     with torch_memory_saver.region():
         dev1_b = torch.full((100_000_000,), 10, dtype=torch.uint8, device=f'{device}:1')
 
-    checker.check_and_update("alloc dev1_b", min_delta=(0, 80_000_000))
+    checker.check_and_update("alloc dev1_b", min_delta=(-_NOISE_BYTES, 80_000_000))
 
     torch_memory_saver.pause()
     torch_memory_saver.resume()
 
-    checker.check_and_update("End", min_delta=(0, 0))
+    checker.check_and_update("End", min_delta=(-_NOISE_BYTES, -_NOISE_BYTES))
 
 
 class _MemoryChecker:

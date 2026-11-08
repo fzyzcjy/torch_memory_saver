@@ -1,7 +1,10 @@
 import ctypes
 import sys
+from ctypes.util import find_library
 
 import torch
+
+from torch_memory_saver.testing_utils import get_device
 
 
 _UNALIGNED_SIZE = 6912
@@ -43,18 +46,26 @@ def _assert_round_trip(memcpy, ptr, expected):
 def run(hook_mode: str):
     assert hook_mode == "preload"
 
-    prefix = "hip" if torch.version.hip else "cuda"
+    device_type = get_device()
+    prefix = "hip" if torch.version.hip else "musa" if device_type == "musa" else "cuda"
     api = ctypes.CDLL(None)
+    # torch loads libmusart without global visibility; memcpy/set_device are not
+    # exported by the TMS preload hook, so bind the runtime directly on MUSA.
+    runtime_api = (
+        ctypes.CDLL(find_library("musart") or "libmusart.so")
+        if prefix == "musa"
+        else api
+    )
     gpu_malloc = _bind(
         api, f"{prefix}Malloc", [ctypes.POINTER(ctypes.c_void_p), ctypes.c_size_t]
     )
     gpu_memcpy = _bind(
-        api,
+        runtime_api,
         f"{prefix}Memcpy",
         [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int],
     )
     gpu_free = _bind(api, f"{prefix}Free", [ctypes.c_void_p])
-    gpu_set_device = _bind(api, f"{prefix}SetDevice", [ctypes.c_int])
+    gpu_set_device = _bind(runtime_api, f"{prefix}SetDevice", [ctypes.c_int])
     tms_pause = _bind(api, "tms_pause", [ctypes.c_char_p], None)
     tms_resume = _bind(api, "tms_resume", [ctypes.c_char_p], None)
 

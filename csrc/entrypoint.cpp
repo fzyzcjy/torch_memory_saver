@@ -4,6 +4,9 @@
 #include <optional>
 #include "macro.h"
 #include "cpu_backup.h"
+#if defined(USE_MUSA)
+#include "hardware_musa_support.h"
+#endif
 
 // ----------------------------------------------- threadlocal configs --------------------------------------------------
 
@@ -66,6 +69,11 @@ static thread_local ThreadLocalConfig thread_local_config;
 #ifdef TMS_HOOK_MODE_PRELOAD
 cudaError_t cudaMalloc(void **ptr, size_t size) {
     if (thread_local_config.is_interesting_region()) {
+#if defined(USE_MUSA)
+        if (MUSAImplementation::caller_requires_plain_malloc(__builtin_return_address(0))) {
+            return APIForwarder::call_real_cuda_malloc(ptr, size);
+        }
+#endif
         return TorchMemorySaver::instance().malloc(
             ptr, CUDAUtils::cu_ctx_get_device(), size, thread_local_config.current_tag_,
             thread_local_config.enable_cpu_backup(), thread_local_config.cpu_backup_kind(),
@@ -165,15 +173,15 @@ void set_memory_margin_bytes(uint64_t value) {
 }
 
 void tms_set_retain_cpu_backup(bool retain_cpu_backup) {
-#ifndef USE_CUDA
-    SIMPLE_CHECK(!retain_cpu_backup, "retained CPU backup policy is CUDA-only");
+#if !defined(USE_CUDA) && !defined(USE_MUSA)
+    SIMPLE_CHECK(!retain_cpu_backup, "retained CPU backup policy is CUDA/MUSA-only");
 #else
     TorchMemorySaver::instance().set_retain_cpu_backup(retain_cpu_backup);
 #endif
 }
 
 bool tms_get_retain_cpu_backup() {
-#ifndef USE_CUDA
+#if !defined(USE_CUDA) && !defined(USE_MUSA)
     return false;
 #else
     return TorchMemorySaver::instance().get_retain_cpu_backup();

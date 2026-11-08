@@ -45,7 +45,7 @@ struct AllocationMetadata {
     size_t aligned_size;
     XPUAllocExtra xpu;
 #else
-    // CUDA and ROCm 7.0+: Single allocation handle
+    // CUDA, ROCm 7.0+ and MUSA: Single allocation handle
     size_t allocation_size;
     CUmemGenericAllocationHandle allocHandle;
 #endif

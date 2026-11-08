@@ -106,6 +106,60 @@ inline cudaError_t cudaMemcpy(void *dst, const void *src, size_t size, cudaMemcp
 
 #define TMS_ROCM_LEGACY_CHUNKED 0
 
+#elif defined(USE_MUSA)
+#include <musa_runtime_api.h>
+#include <musa.h>
+
+/*
+ * MUSA API mapping: the CUDA driver/runtime identifiers used by the shared
+ * CUDA path (core.cpp/core.h and utils.h) resolve to their MUSA counterparts.
+ * The preload hook in entrypoint.cpp intentionally defines musaMalloc/musaFree
+ * through the cudaMalloc/cudaFree aliases so LD_PRELOAD can intercept them.
+ */
+// --- Error handling types and constants ---
+#define CUresult MUresult
+#define cudaError_t musaError_t
+#define CUDA_SUCCESS MUSA_SUCCESS
+#define cudaSuccess musaSuccess
+#define cudaErrorMemoryAllocation musaErrorMemoryAllocation
+#define CUDA_ERROR_OUT_OF_MEMORY MUSA_ERROR_OUT_OF_MEMORY
+// --- Error reporting ---
+#define cuGetErrorString muGetErrorString
+#define cudaGetErrorString musaGetErrorString
+// --- Driver API types ---
+#define CUdevice MUdevice
+#define CUdeviceptr MUdeviceptr
+#define CUmemGenericAllocationHandle MUmemGenericAllocationHandle
+#define CUmemAllocationProp MUmemAllocationProp
+#define CUmemAccessDesc MUmemAccessDesc
+// --- Driver API functions ---
+#define cuMemGetAllocationGranularity muMemGetAllocationGranularity
+#define cuMemAddressReserve muMemAddressReserve
+#define cuMemAddressFree muMemAddressFree
+#define cuMemCreate muMemCreate
+#define cuMemMap muMemMap
+#define cuMemUnmap muMemUnmap
+#define cuMemRelease muMemRelease
+#define cuMemSetAccess muMemSetAccess
+#define cuCtxGetDevice muCtxGetDevice
+#define cuDeviceGet muDeviceGet
+#define cuDeviceGetAttribute muDeviceGetAttribute
+// --- Runtime API ---
+#define cudaMalloc musaMalloc
+#define cudaFree musaFree
+#define cudaMallocHost musaMallocHost
+#define cudaFreeHost musaFreeHost
+#define cudaMemcpy musaMemcpy
+#define cudaMemGetInfo musaMemGetInfo
+#define cudaDeviceSynchronize musaDeviceSynchronize
+#define cudaGetDevice musaGetDevice
+#define cudaSetDevice musaSetDevice
+#define cudaMemcpyDeviceToHost musaMemcpyDeviceToHost
+#define cudaMemcpyHostToDevice musaMemcpyHostToDevice
+#define cudaStream_t musaStream_t
+
+#define TMS_ROCM_LEGACY_CHUNKED 0
+
 #else
 #error "USE_PLATFORM is not set"
 #endif

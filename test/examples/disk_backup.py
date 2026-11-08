@@ -7,6 +7,7 @@ import tempfile
 import torch
 
 from torch_memory_saver import torch_memory_saver
+from torch_memory_saver.testing_utils import empty_cache, get_device
 
 
 def run(hook_mode: str):
@@ -14,30 +15,31 @@ def run(hook_mode: str):
     os.environ["TMS_DISK_BACKUP_CHUNK_MB"] = "1"
     torch_memory_saver.hook_mode = hook_mode
     logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
+    device = get_device()
 
     disk_dir = tempfile.mkdtemp(prefix="tms_disk_backup_")
     print(f"disk_backup_dir={disk_dir}")
     torch_memory_saver.set_disk_backup_dir(disk_dir)
     try:
-        _run(disk_dir)
+        _run(disk_dir, device)
     finally:
         shutil.rmtree(disk_dir, ignore_errors=True)
 
 
-def _run(disk_dir: str):
+def _run(disk_dir: str, device: str):
     chunk_bytes = 1 * 1024 * 1024
     numel = chunk_bytes * 13 // 4 + 12345  # ~13.4 fp32 chunks: multi-chunk, non-even tail
 
     print("Allocate tensor_with_disk_backup")
     with torch_memory_saver.region(enable_disk_backup=True):
-        big = torch.randn((numel,), dtype=torch.float32, device='cuda')
-        small = torch.full((7,), 10, dtype=torch.uint8, device='cuda')
+        big = torch.randn((numel,), dtype=torch.float32, device=device)
+        small = torch.full((7,), 10, dtype=torch.uint8, device=device)
     big_oracle = big.detach().to('cpu').clone()
     small_oracle = small.detach().to('cpu').clone()
 
     print("Allocate tensor_without_backup")
     with torch_memory_saver.region(enable_disk_backup=False):
-        no_backup = torch.full((20_000_000,), 20, dtype=torch.uint8, device='cuda')
+        no_backup = torch.full((20_000_000,), 20, dtype=torch.uint8, device=device)
 
     assert torch.equal(big.cpu(), big_oracle)
     assert no_backup[:3].tolist() == [20, 20, 20]
@@ -52,9 +54,9 @@ def _run(disk_dir: str):
         assert total >= big.numel() * 4, f"backup smaller than the paused tensor: {total}"
         disk_sizes.add(total)
 
-        occupy = torch.full((20_000_000,), 30, dtype=torch.uint8, device='cuda')
+        occupy = torch.full((20_000_000,), 30, dtype=torch.uint8, device=device)
         del occupy
-        torch.cuda.empty_cache()
+        empty_cache()
 
         torch_memory_saver.resume()
 
