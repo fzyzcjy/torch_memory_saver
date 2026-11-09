@@ -173,15 +173,15 @@ void set_memory_margin_bytes(uint64_t value) {
 }
 
 void tms_set_retain_cpu_backup(bool retain_cpu_backup) {
-#if !defined(USE_CUDA) && !defined(USE_MUSA) && !defined(USE_MLU)
-    SIMPLE_CHECK(!retain_cpu_backup, "retained CPU backup policy is CUDA/MUSA/MLU-only");
+#if !TMS_SUPPORTS_RETAIN_CPU_BACKUP
+    SIMPLE_CHECK(!retain_cpu_backup, "retained CPU backup policy needs CUDA, MUSA, MLU or ROCm 7+");
 #else
     TorchMemorySaver::instance().set_retain_cpu_backup(retain_cpu_backup);
 #endif
 }
 
 bool tms_get_retain_cpu_backup() {
-#if !defined(USE_CUDA) && !defined(USE_MUSA) && !defined(USE_MLU)
+#if !TMS_SUPPORTS_RETAIN_CPU_BACKUP
     return false;
 #else
     return TorchMemorySaver::instance().get_retain_cpu_backup();

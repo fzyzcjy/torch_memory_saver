@@ -15,6 +15,7 @@ from examples import (
     simple,
     cuda_graph,
     cuda_vmm_granularity,
+    rocm_vmm_adjacent_host_register,
     cpu_backup,
     disk_backup,
     rl_example,
@@ -41,6 +42,7 @@ _skip_on_lupine = pytest.mark.skipif(
     reason="Lupine GPU-over-IP does not preserve native pinned-host or process RSS semantics",
 )
 _xpu_only = pytest.mark.skipif(not _IS_XPU, reason="XPU-specific path")
+_rocm_only = pytest.mark.skipif(torch.version.hip is None, reason="ROCm-specific path")
 _device_module = get_device_module()
 _multi_device_only = pytest.mark.skipif(
     _device_module.device_count() < 2,
@@ -189,6 +191,12 @@ def test_training_engine():
 def test_cuda_vmm_granularity():
     with change_env("TMS_INIT_ENABLE", "1"):
         _test_core(cuda_vmm_granularity.run, hook_mode="preload")
+
+
+@_rocm_only
+def test_rocm_vmm_adjacent_host_register():
+    with change_env("TMS_INIT_ENABLE", "1"):
+        _test_core(rocm_vmm_adjacent_host_register.run, hook_mode="preload")
 
 
 @pytest.mark.skipif(

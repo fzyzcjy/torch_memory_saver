@@ -37,6 +37,7 @@ _BUILD_TOOL_TEST_MODULES = ("test_merge_cuda_wheels.py", "test_setup_rpath.py")
 _NON_CUDA_TEST_MODULES = ("test_mlu.py",)
 _MULTI_DEVICE_SKIP_REASON = "Multi-device test requires at least two devices"
 _XPU_SKIP_REASON = "XPU-specific path"
+_ROCM_SKIP_REASON = "ROCm-specific path"
 _LUPINE_SKIP_REASON = (
     "Lupine GPU-over-IP does not preserve native pinned-host or process RSS semantics"
 )
@@ -67,6 +68,10 @@ _EXPECTED_SINGLE_GPU_SKIPS = (
             "test_multi_device_sync_xpu",
             "test_memory_margin_unsupported_xpu",
         )
+    ),
+    (
+        "test/test_examples.py::test_rocm_vmm_adjacent_host_register",
+        _ROCM_SKIP_REASON,
     ),
 )
 _EXPECTED_LUPINE_SKIPS = (

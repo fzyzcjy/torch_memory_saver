@@ -113,6 +113,12 @@ namespace CUDAUtils {
             return ((raw_size + granularity - 1) / granularity) * granularity;
         }
 
+        // HIP's range check in hipMemUnmap/hipMemSetAccess also counts a hipHostRegister'ed buffer that starts
+        // exactly at the range end and then fails; an unmapped trailing granule keeps that address reserved.
+        static size_t cu_mem_get_reserve_size(size_t allocation_size, CUdevice device) {
+            return allocation_size + cu_mem_get_allocation_size(1, device);
+        }
+
         static void cu_mem_set_access(void *ptr, size_t allocation_size, CUdevice device) {
             hipMemAccessDesc accessDesc = {};
             accessDesc.location.type = hipMemLocationTypeDevice;
@@ -152,6 +158,10 @@ namespace CUDAUtils {
         SIMPLE_CHECK(raw_size <= std::numeric_limits<size_t>::max() - (granularity - 1), "MLU allocation size overflow");
         return ((raw_size + granularity - 1) / granularity) * granularity;
     }
+    [[maybe_unused]] static size_t cu_mem_get_reserve_size(size_t allocation_size, CUdevice /*device*/) {
+        return allocation_size;
+    }
+
     [[maybe_unused]] static cudaError_t cu_mem_create(CUmemGenericAllocationHandle *handle, size_t size, CUdevice device) {
         auto prop = cu_mem_get_allocation_prop(device);
         CNresult result = cnMemCreate(handle, size, &prop, 0);
@@ -202,6 +212,10 @@ namespace CUDAUtils {
             raw_size <= std::numeric_limits<size_t>::max() - (granularity - 1),
             "allocation size overflow while applying CUDA VMM granularity");
         return ((raw_size + granularity - 1) / granularity) * granularity;
+    }
+
+    static size_t cu_mem_get_reserve_size(size_t allocation_size, CUdevice /*device*/) {
+        return allocation_size;
     }
 
     static cudaError_t cu_mem_create(CUmemGenericAllocationHandle *alloc_handle, size_t allocation_size, CUdevice device) {
@@ -273,6 +287,10 @@ namespace CUDAUtils {
             raw_size <= std::numeric_limits<size_t>::max() - (granularity - 1),
             "allocation size overflow while applying MUSA VMM granularity");
         return ((raw_size + granularity - 1) / granularity) * granularity;
+    }
+
+    [[maybe_unused]] static size_t cu_mem_get_reserve_size(size_t allocation_size, MUdevice /*device*/) {
+        return allocation_size;
     }
 
     [[maybe_unused]] static musaError_t cu_mem_create(MUmemGenericAllocationHandle *alloc_handle, size_t allocation_size, MUdevice device) {

@@ -17,7 +17,8 @@ readonly EXPECTED_PYTEST_SKIPS='{
   "test/test_examples.py::test_multi_device[torch]": "Multi-device test requires at least two devices",
   "test/test_examples.py::test_multi_device_sync_xpu": "XPU-specific path",
   "test/test_examples.py::test_multi_device_torch_mode": "Multi-device test requires at least two devices",
-  "test/test_examples.py::test_resume_failure_injection_xpu": "XPU-specific path"
+  "test/test_examples.py::test_resume_failure_injection_xpu": "XPU-specific path",
+  "test/test_examples.py::test_rocm_vmm_adjacent_host_register": "ROCm-specific path"
 }'
 
 trap 'status=$?; rm -f "$PYPI_JSON"; echo "RESULT: returncode=$status"; exit "$status"' EXIT
