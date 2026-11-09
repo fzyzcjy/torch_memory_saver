@@ -4,11 +4,11 @@ from ctypes.util import find_library
 
 import torch
 
-from torch_memory_saver.testing_utils import get_device
+from torch_memory_saver.testing_utils import get_device, is_mlu
 
 
 _UNALIGNED_SIZE = 6912
-_MEMCPY_HOST_TO_DEVICE = 1
+_MEMCPY_HOST_TO_DEVICE = 0 if is_mlu() else 1
 _MEMCPY_DEVICE_TO_HOST = 2
 
 
@@ -47,7 +47,14 @@ def run(hook_mode: str):
     assert hook_mode == "preload"
 
     device_type = get_device()
-    prefix = "hip" if torch.version.hip else "musa" if device_type == "musa" else "cuda"
+    if is_mlu():
+        prefix = "cnrt"
+    elif torch.version.hip:
+        prefix = "hip"
+    elif device_type == "musa":
+        prefix = "musa"
+    else:
+        prefix = "cuda"
     api = ctypes.CDLL(None)
     # torch loads libmusart without global visibility; memcpy/set_device are not
     # exported by the TMS preload hook, so bind the runtime directly on MUSA.

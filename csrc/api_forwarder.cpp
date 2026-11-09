@@ -13,6 +13,9 @@ namespace APIForwarder {
 #elif defined(USE_MUSA)
     static constexpr const char* MALLOC_NAME = "musaMalloc";
     static constexpr const char* FREE_NAME = "musaFree";
+#elif defined(USE_MLU)
+    static constexpr const char* MALLOC_NAME = "cnrtMalloc";
+    static constexpr const char* FREE_NAME = "cnrtFree";
 #else
     static constexpr const char* MALLOC_NAME = "cudaMalloc";
     static constexpr const char* FREE_NAME = "cudaFree";

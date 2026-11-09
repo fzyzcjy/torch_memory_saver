@@ -61,6 +61,9 @@
     #define TMS_ROCM_LEGACY_CHUNKED 0
 #endif
 
+#elif defined(USE_MLU)
+#include "hardware_mlu_support.h"
+
 #elif defined(USE_CUDA)
 #include <cuda_runtime_api.h>
 #include <cuda.h>
@@ -164,9 +167,9 @@ inline cudaError_t cudaMemcpy(void *dst, const void *src, size_t size, cudaMemcp
 #error "USE_PLATFORM is not set"
 #endif
 
-// Retaining CPU backups across resume is decided in the resume path that CUDA, MUSA and ROCm 7+ share;
+// Retaining CPU backups across resume is decided in the resume path that CUDA, MUSA, MLU and ROCm 7+ share;
 // the chunked ROCm 6 path restores without it.
-#if defined(USE_CUDA) || defined(USE_MUSA) || (defined(USE_ROCM) && !TMS_ROCM_LEGACY_CHUNKED)
+#if defined(USE_CUDA) || defined(USE_MUSA) || defined(USE_MLU) || (defined(USE_ROCM) && !TMS_ROCM_LEGACY_CHUNKED)
 #define TMS_SUPPORTS_RETAIN_CPU_BACKUP 1
 #else
 #define TMS_SUPPORTS_RETAIN_CPU_BACKUP 0
