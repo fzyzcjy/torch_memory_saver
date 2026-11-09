@@ -110,6 +110,33 @@ The retention policy is consulted on resume. Setting it to `False` does not eage
 backups for active allocations; they are released by a later non-retaining
 resume, when the allocation is freed, or when the process exits.
 
+Alternatively, released host backups can be pooled for reuse instead of being
+freed. Creating the host shadow (`cudaMallocHost` page-locking, or a fresh
+mmap's first-touch faults) dominates pause()/resume() in cyclic workloads,
+while the DMA copy itself is fast. Set `TMS_CPU_BACKUP_POOL_MAX_BYTES` to a
+byte cap (or `-1` for no cap) to pool released backups keyed by
+(backend, size); `0` (default) keeps the legacy free-on-release behavior. The
+same setting is available from Python as
+`torch_memory_saver.cpu_backup_pool_max_bytes`, and
+`torch_memory_saver.get_cpu_backup_pool_bytes()` reports the currently pooled
+bytes. Pooling is CUDA-only and, unlike `retain_cpu_backup`,
+`get_cpu_backup` still returns `None` after a non-retaining resume; the host
+RAM held by the pool is bounded by the cap, and lowering the cap frees pooled
+slots on the spot. Setting the cap through the Python API takes precedence
+over the env var, regardless of order.
+
+Pool vs retain, in short: both remove the per-cycle host-buffer alloc/free
+(the D2H copy itself still runs on every pause in both modes). Retention keeps
+each backup bound to its allocation — `get_cpu_backup` stays valid after
+resume, and the host memory is held until the allocation is freed or a later
+non-retaining resume. Pooling detaches the buffer from the allocation:
+`get_cpu_backup` still returns `None` after a non-retaining resume, buffers are
+reused by any same-backend, same-size allocation, and the cap bounds the
+host RAM held. For
+one stable set of allocations cycling pause/resume, retention is enough;
+pooling fits workloads that churn allocations or need a runtime-adjustable
+bound on host RAM.
+
 ### Hook Modes
 
 There are two hook modes:
