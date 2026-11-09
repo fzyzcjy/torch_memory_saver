@@ -244,6 +244,10 @@ namespace CUDAUtils {
         return ((raw_size + granularity - 1) / granularity) * granularity;
     }
 
+    [[maybe_unused]] static size_t cu_mem_get_reserve_size(size_t allocation_size, MUdevice /*device*/) {
+        return allocation_size;
+    }
+
     [[maybe_unused]] static musaError_t cu_mem_create(MUmemGenericAllocationHandle *alloc_handle, size_t allocation_size, MUdevice device) {
         const MUmemAllocationProp prop = cu_mem_get_allocation_prop(device);
 
