@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # copy & modify from torch/utils/cpp_extension.py
 def _find_platform_home(platform):
-    """Find the install path for the specified platform (cuda/rocm/xpu)."""
+    """Find the install path for the specified platform (cuda/rocm/musa/xpu)."""
     if platform == "cuda":
         # Find CUDA home
         home = os.environ.get('CUDA_HOME') or os.environ.get('CUDA_PATH')
@@ -22,6 +22,14 @@ def _find_platform_home(platform):
                 home = os.path.dirname(os.path.dirname(compiler_path))
             else:
                 home = '/usr/local/cuda'
+    elif platform == "musa":
+        home = os.environ.get('MUSA_HOME') or os.environ.get('MUSA_PATH')
+        if home is None:
+            mcc = shutil.which("mcc")
+            if mcc is not None:
+                home = os.path.dirname(os.path.dirname(mcc))
+            else:
+                home = '/usr/local/musa'
     elif platform == "xpu":
         home = os.environ.get('ONEAPI_ROOT')
         if home is None:
@@ -44,7 +52,7 @@ def _find_platform_home(platform):
 
 
 def _detect_platform():
-    """Detect whether to use CUDA, HIP or XPU based on available tools."""
+    """Detect whether to use CUDA, HIP, MUSA or XPU based on available tools."""
     forced = os.environ.get("TMS_PLATFORM")
     if forced:
         return forced
@@ -53,11 +61,21 @@ def _detect_platform():
         return "hip"
     elif shutil.which("nvcc") is not None:
         return "cuda"
+    elif _has_musa():
+        return "musa"
     elif _find_icpx() is not None:
         return "xpu"
     else:
         # Default to CUDA if neither is found
         return "cuda"
+
+
+def _has_musa():
+    """True when MUSA headers and libs are available (or 'mcc' is on PATH)."""
+    home = os.environ.get("MUSA_HOME") or os.environ.get("MUSA_PATH")
+    if home and os.path.isfile(os.path.join(home, "include", "musa.h")):
+        return True
+    return shutil.which("mcc") is not None
 
 
 class PlatformExtension(setuptools.Extension):
@@ -110,7 +128,6 @@ class build_platform_ext(build_ext):
 
 def _create_ext_modules(platform):
     """Create extension modules based on the specified platform."""
-    
     # Common sources for all extensions
     sources = [
         'csrc/api_forwarder.cpp',
@@ -142,6 +159,15 @@ def _create_ext_modules(platform):
         include_dirs, library_dirs = _icpx_oneapi_include_lib(icpx)
         libraries = ['sycl', 'ze_loader']
         platform_macros = [('USE_XPU', '1')]
+    elif platform == "musa":
+        sources.append('csrc/hardware_musa_support.cpp')
+        include_dirs = [str((platform_home / 'include').resolve())]
+        library_dirs = [
+            str((platform_home / 'lib').resolve()),
+            str((platform_home / 'lib64').resolve()),
+        ]
+        libraries = ['musa', 'musart', 'dl']
+        platform_macros = [('USE_MUSA', '1')]
     else:  # cuda
         include_dirs = [str((platform_home / 'include').resolve())]
         library_dirs = [
@@ -154,7 +180,7 @@ def _create_ext_modules(platform):
     # Suffix the compiled .so files with the CUDA major they link against, so
     # a single wheel can ship cu12 and cu13 variants side-by-side. `utils.py`
     # picks the right one at runtime via torch.version.cuda / libcudart probe.
-    # ROCm builds are single-variant for now and use unsuffixed binaries.
+    # ROCm and MUSA builds are single-variant and use unsuffixed binaries.
     if platform == "cuda":
         cuda_major = os.environ.get("TMS_CUDA_MAJOR")
         if not cuda_major:

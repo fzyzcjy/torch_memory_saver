@@ -6,3 +6,5 @@ dist
 **/__pycache__/
 .vscode
 .cursor/
+*.mudmp
+.pytest_cache/

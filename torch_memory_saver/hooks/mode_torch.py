@@ -14,6 +14,9 @@ class HookUtilModeTorch(HookUtilBase):
             from torch.xpu.memory import XPUPluggableAllocator
 
             PluggableAllocator = XPUPluggableAllocator
+        elif hasattr(torch, "musa"):
+            # MUSA torch builds keep the pluggable allocator under torch.musa.
+            PluggableAllocator = torch.musa.memory.MUSAPluggableAllocator
         else:
             from torch.cuda.memory import CUDAPluggableAllocator
 

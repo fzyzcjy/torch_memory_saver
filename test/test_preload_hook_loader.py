@@ -57,7 +57,7 @@ _CUDA_HOOKS = _shipped_cuda_hooks()
 
 pytestmark = [
     pytest.mark.skipif(sys.platform != "linux", reason="LD_PRELOAD loader test needs Linux"),
-    pytest.mark.skipif(not _CUDA_HOOKS, reason="no CUDA hooks installed (ROCm/XPU build)"),
+    pytest.mark.skipif(not _CUDA_HOOKS, reason="no CUDA hooks installed (non-CUDA build)"),
 ]
 
 
