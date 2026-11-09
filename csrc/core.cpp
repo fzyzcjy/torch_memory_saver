@@ -72,7 +72,8 @@ cudaError_t TorchMemorySaver::malloc(
         return ret;
     }
 
-    CURESULT_CHECK(cuMemAddressReserve((CUdeviceptr *) ptr, allocation_size, 0, 0, 0));
+    CURESULT_CHECK(cuMemAddressReserve(
+        (CUdeviceptr *) ptr, CUDAUtils::cu_mem_get_reserve_size(allocation_size, device), 0, 0, 0));
     CURESULT_CHECK(cuMemMap((CUdeviceptr) * ptr, allocation_size, 0, allocHandle, 0));
     CUDAUtils::cu_mem_set_access(*ptr, allocation_size, device);
 
@@ -124,7 +125,8 @@ cudaError_t TorchMemorySaver::free(void *ptr) {
         CURESULT_CHECK(cuMemUnmap((CUdeviceptr) ptr, metadata.allocation_size));
         CURESULT_CHECK(cuMemRelease(metadata.allocHandle));
     }
-    CURESULT_CHECK(cuMemAddressFree((CUdeviceptr) ptr, metadata.allocation_size));
+    CURESULT_CHECK(cuMemAddressFree(
+        (CUdeviceptr) ptr, CUDAUtils::cu_mem_get_reserve_size(metadata.allocation_size, metadata.device)));
 
     cpu_backuper::release(metadata.cpu_backup);
 
