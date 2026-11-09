@@ -125,6 +125,18 @@ RAM held by the pool is bounded by the cap, and lowering the cap frees pooled
 slots on the spot. Setting the cap through the Python API takes precedence
 over the env var, regardless of order.
 
+Pool vs retain, in short: both remove the per-cycle host-buffer alloc/free
+(the D2H copy itself still runs on every pause in both modes). Retention keeps
+each backup bound to its allocation — `get_cpu_backup` stays valid after
+resume, and the host memory is held until the allocation is freed or a later
+non-retaining resume. Pooling detaches the buffer from the allocation:
+`get_cpu_backup` still returns `None` after a non-retaining resume, buffers are
+reused by any same-backend, same-size allocation, and the cap bounds the
+host RAM held. For
+one stable set of allocations cycling pause/resume, retention is enough;
+pooling fits workloads that churn allocations or need a runtime-adjustable
+bound on host RAM.
+
 ### Hook Modes
 
 There are two hook modes:
