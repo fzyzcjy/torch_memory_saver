@@ -39,6 +39,23 @@ def is_xpu() -> bool:
     return hasattr(torch, "xpu") and torch.xpu.is_available()
 
 
+def _is_mlu_torch() -> bool:
+    """Detect the registered backend without querying visible MLU devices."""
+    try:
+        import torch
+    except ImportError:
+        return False
+    return hasattr(torch, "mlu")
+
+
+def is_mlu() -> bool:
+    try:
+        import torch
+    except ImportError:
+        return False
+    return hasattr(torch, "mlu") and torch.mlu.is_available()
+
+
 def _detect_cuda_major() -> int:
     """Pick which libcudart major the hosting process will use.
 
@@ -81,7 +98,7 @@ def get_binary_path_from_package(stem: str):
     the detected GPU runtime.
 
     CUDA wheels ship multiple suffixed builds (e.g. `<stem>_cu12.abi3.so`,
-    `<stem>_cu13.abi3.so`). ROCm, MUSA and Intel XPU builds ship an unsuffixed
+    `<stem>_cu13.abi3.so`). ROCm, MUSA, MLU and Intel XPU builds ship an unsuffixed
     binary (e.g. `<stem>.abi3.so`).
 
     Raises:
@@ -90,7 +107,10 @@ def get_binary_path_from_package(stem: str):
     """
     dir_package = Path(__file__).parent
 
-    if _is_rocm_torch():
+    if _is_mlu_torch():
+        pattern = f"{stem}.*.so"
+        runtime_desc = "Cambricon MLU"
+    elif _is_rocm_torch():
         pattern = f"{stem}.*.so"
         runtime_desc = "ROCm/HIP torch"
     elif is_musa():

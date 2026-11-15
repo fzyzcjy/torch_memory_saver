@@ -141,6 +141,51 @@ namespace CUDAUtils {
         }
     #endif
 
+#elif defined(USE_MLU)
+    [[maybe_unused]] static CNmemAllocationProp cu_mem_get_allocation_prop(CUdevice device) {
+        CNmemAllocationProp prop = {};
+        prop.type = CN_MEM_ALLOCATION_TYPE_DEFAULT;
+        prop.location.type = CN_MEM_LOCATION_TYPE_DEVICE;
+        prop.location.id = device;
+        prop.requestedHandleTypes = CN_MEM_HANDLE_TYPE_NONE;
+        return prop;
+    }
+    [[maybe_unused]] static size_t cu_mem_get_allocation_size(size_t raw_size, CUdevice device) {
+        auto prop = cu_mem_get_allocation_prop(device);
+        size_t granularity = 0;
+        CURESULT_CHECK(cnMemGetAllocationGranularity(&granularity, &prop, CN_MEM_ALLOC_GRANULARITY_MINIMUM));
+        SIMPLE_CHECK(granularity > 0, "zero MLU VMM granularity");
+        SIMPLE_CHECK(raw_size <= std::numeric_limits<size_t>::max() - (granularity - 1), "MLU allocation size overflow");
+        return ((raw_size + granularity - 1) / granularity) * granularity;
+    }
+    [[maybe_unused]] static size_t cu_mem_get_reserve_size(size_t allocation_size, CUdevice /*device*/) {
+        return allocation_size;
+    }
+
+    [[maybe_unused]] static cudaError_t cu_mem_create(CUmemGenericAllocationHandle *handle, size_t size, CUdevice device) {
+        auto prop = cu_mem_get_allocation_prop(device);
+        CNresult result = cnMemCreate(handle, size, &prop, 0);
+        if (result == CN_MEMORY_ERROR_OUT_OF_MEMORY) return cudaErrorMemoryAllocation;
+        CURESULT_CHECK(result);
+        return cudaSuccess;
+    }
+    [[maybe_unused]] static void cu_mem_set_access(void *ptr, size_t size, CUdevice device) {
+        CNmemAccessDesc access = {};
+        access.location.type = CN_MEM_LOCATION_TYPE_DEVICE;
+        access.location.id = device;
+        access.accessFlags = CN_MEM_ACCESS_FLAGS_PROT_READWRITE;
+        CURESULT_CHECK(cnMemSetAccess((CNaddr)ptr, size, &access, 1));
+    }
+    [[maybe_unused]] static CUdevice cu_ctx_get_device() {
+        CNdev device;
+        CURESULT_CHECK(cnCtxGetDevice(&device));
+        return device;
+    }
+    [[maybe_unused]] static CUdevice cu_device_get(int ordinal) {
+        CNdev device;
+        CURESULT_CHECK(cnDeviceGet(&device, ordinal));
+        return device;
+    }
 #elif defined(USE_CUDA)
     static CUmemAllocationProp cu_mem_get_allocation_prop(CUdevice device) {
         CUmemAllocationProp prop = {};

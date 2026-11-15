@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # copy & modify from torch/utils/cpp_extension.py
 def _find_platform_home(platform):
-    """Find the install path for the specified platform (cuda/rocm/musa/xpu)."""
+    """Find the install path for the specified platform (cuda/rocm/musa/xpu/mlu)."""
     if platform == "cuda":
         # Find CUDA home
         home = os.environ.get('CUDA_HOME') or os.environ.get('CUDA_PATH')
@@ -30,6 +30,8 @@ def _find_platform_home(platform):
                 home = os.path.dirname(os.path.dirname(mcc))
             else:
                 home = '/usr/local/musa'
+    elif platform == "mlu":
+        home = os.environ.get("NEUWARE_HOME", "/usr/local/neuware")
     elif platform == "xpu":
         home = os.environ.get('ONEAPI_ROOT')
         if home is None:
@@ -153,6 +155,11 @@ def _create_ext_modules(platform):
         library_dirs = [str(platform_home.resolve() / 'lib')]
         libraries = ['amdhip64', 'dl']
         platform_macros = [('USE_ROCM', '1'), ('__HIP_PLATFORM_AMD__', '1')]
+    elif platform == "mlu":
+        include_dirs = [str(platform_home / "include")]
+        library_dirs = [str(platform_home / "lib64")]
+        libraries = ["cndrv", "cnrt", "dl"]
+        platform_macros = [("USE_MLU", "1")]
     elif platform == "xpu":
         sources.append('csrc/hardware_xpu_support.cpp')
         icpx = _resolve_xpu_icpx()

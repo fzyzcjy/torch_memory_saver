@@ -93,7 +93,7 @@ ROCm stays pinned (`hipHostMalloc`); `cpu_backup_backend="mmap"` is rejected. On
 
 `TMS_INIT_CPU_BACKUP_BACKEND=mmap|pinned` sets the process default for preload / env-driven integrations; an explicit `cpu_backup_backend=` argument overrides it.
 
-Pinned or mmap CPU backups on CUDA and MUSA, and pinned backups on ROCm 7+, can be retained
+Pinned or mmap CPU backups on CUDA, MUSA and MLU, and pinned backups on ROCm 7+, can be retained
 across resume cycles to avoid reallocating them before every pause:
 
 ```python
@@ -101,9 +101,9 @@ torch_memory_saver.retain_cpu_backup = True
 ```
 
 Set `TMS_RETAIN_CPU_BACKUP=1` before process startup to enable the same policy,
-including for preload mode. Retention needs CUDA, MUSA or ROCm 7+ and can consume host RAM
+including for preload mode. Retention needs CUDA, MUSA, MLU or ROCm 7+ and can consume host RAM
 equal to the backed-up allocations. While enabled, `get_cpu_backup` continues
-to expose the retained backup after resume. Without retention on CUDA, MUSA or ROCm 7+,
+to expose the retained backup after resume. Without retention on CUDA, MUSA, MLU or ROCm 7+,
 `get_cpu_backup` is only valid while allocations are paused.
 
 The retention policy is consulted on resume. Setting it to `False` does not eagerly free
@@ -135,6 +135,7 @@ Please refer to `rl_example.py` for details.
 | AMD (ROCm) | HIP VMM (`hipMemMap`/`hipMemCreate`) | preload, torch | `pip install torch_memory_saver` (prebuilt wheel) |
 | Intel (XPU) | Level Zero VMM (`zeVirtualMemMap`/`zePhysicalMemCreate`) | torch only | `pip install` from source (builds against local oneAPI) |
 | Moore Threads (MUSA) | MUSA VMM (`muMemMap`/`muMemCreate`) | preload, torch | `pip install` from source (builds against local MUSA toolkit) |
+| Cambricon (MLU) | CNDriver VMM (`cnMemMap`/`cnMemCreate`) | preload, torch | `pip install` from source (builds against local Neuware) |
 
 ### Intel XPU
 
@@ -189,6 +190,50 @@ those libraries cannot operate on VMM-backed buffers.
 TMS does not alias `torch.cuda.*` to MUSA. Call `torch.musa.empty_cache()` on
 MUSA; the native `torch.cuda.empty_cache()` entry point does not release MUSA
 blocks.
+
+### Cambricon MLU
+
+Build with the Neuware headers and libraries available locally. Install a
+compatible `torch_mlu` first and expose Neuware's runtime libraries to the loader:
+
+```bash
+export NEUWARE_HOME=${NEUWARE_HOME:-/usr/local/neuware}
+export LD_LIBRARY_PATH="$NEUWARE_HOME/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+TMS_PLATFORM=mlu pip install --no-build-isolation .  # or make build-mlu
+```
+
+With a compatible installation, importing `torch` automatically registers MLU.
+If `TORCH_DEVICE_BACKEND_AUTOLOAD=0`, import `torch_mlu` before first using
+TorchMemorySaver. Backend detection does not load `torch_mlu` itself.
+
+Torch mode uses `MLUPluggableAllocator` and `torch.mlu.MemPool`. Preload mode
+intercepts `cnrtMalloc`/`cnrtFree`; start the child under `configure_subprocess()`
+so the hook is loaded before the runtime. Pause releases physical memory while
+preserving virtual addresses. CPU backups support pinned and mmap storage,
+including retained backups. Without a backup, rewrite contents after resume.
+
+MLU regions and `disable()` use the current device. Select the device before
+entering each region; a tensor's `device=` argument alone is insufficient:
+
+```python
+with torch.mlu.device(1), torch_memory_saver.region("weights", enable_cpu_backup=True):
+    weights = torch.ones(1024, device="mlu:1")
+```
+
+Use a separate device scope and region for each device. Pool routing is
+device-wide: avoid concurrent allocations from other threads on the same
+device while a region or `disable()` scope is active.
+
+Pauseable `torch.mlu.MLUGraph` capture requires preload mode. Torch mode does
+not support graph memory release. Do not change a shared saver's hook mode
+from preload to torch when graph memory release is needed. Expandable segments
+(`PYTORCH_MLU_ALLOC_CONF=expandable_segments:True`) are unsupported.
+
+Run the common regression suite and MLU lifecycle checks on idle devices:
+
+```bash
+CN_VISIBLE_DEVICES=0,1 python -m pytest test -v -ra --tb=short
+```
 
 ## Development
 

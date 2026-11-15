@@ -2,11 +2,13 @@
 
 import torch
 
-from torch_memory_saver.utils import is_musa, is_xpu
+from torch_memory_saver.utils import is_mlu, is_musa, is_xpu
 
 
 def get_device_module():
-    """Device module for tests: torch.xpu on Intel GPUs, torch.musa on MUSA, else torch.cuda."""
+    """Device module for tests: MLU, XPU, MUSA, or CUDA."""
+    if is_mlu():
+        return torch.mlu
     if is_xpu():
         return torch.xpu
     if is_musa():
@@ -15,7 +17,9 @@ def get_device_module():
 
 
 def get_device() -> str:
-    """Device string for tests: 'xpu' on Intel GPUs, 'musa' on MUSA, else 'cuda'."""
+    """Device string for tests: 'mlu', 'xpu', 'musa', or 'cuda'."""
+    if is_mlu():
+        return "mlu"
     if is_xpu():
         return "xpu"
     if is_musa():
@@ -24,7 +28,9 @@ def get_device() -> str:
 
 
 def get_graph_class():
-    """Graph capture class for tests (MUSA exposes MUSAGraph instead of CUDAGraph)."""
+    """Graph capture class for tests (MLUGraph, MUSAGraph, or CUDAGraph)."""
+    if is_mlu():
+        return torch.mlu.MLUGraph
     if is_musa():
         return torch.musa.MUSAGraph
     return torch.cuda.CUDAGraph
@@ -60,7 +66,10 @@ def _musa_used_memory(gpu_id=0):
 
 def get_and_print_gpu_memory(message, gpu_id=0):
     """Print GPU memory usage with optional message."""
-    if is_xpu():
+    if is_mlu():
+        free, total = torch.mlu.mem_get_info(gpu_id)
+        mem = total - free
+    elif is_xpu():
         mem = _xpu_used_memory(gpu_id)
     elif is_musa():
         mem = _musa_used_memory(gpu_id)

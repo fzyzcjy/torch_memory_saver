@@ -331,10 +331,31 @@ class TestGpuValidationCommand:
         assert "logs:" in message
         assert "AttributeError" not in message
 
+    def test_mlu_tests_are_excluded_from_cuda_release(self) -> None:
+        gpu_validation._require_runtime_test_contract(
+            release_root=Path(__file__).parents[4]
+        )
+        assert "test_mlu.py" not in gpu_validation._RUNTIME_TEST_MODULES
+        for script in (
+            gpu_validation._X86_VALIDATION_SCRIPT,
+            gpu_validation._ARM_VALIDATION_SCRIPT,
+            Path(__file__).with_name("verify_published_release.sh").read_text(),
+        ):
+            assert "test_mlu.py" not in script
+        assert not any(
+            node.startswith("test/test_mlu.py::")
+            for node, _ in gpu_validation._EXPECTED_SINGLE_GPU_SKIPS
+        )
+
+    def test_runtime_test_classification_accepts_repository_inventory(self) -> None:
+        gpu_validation._require_runtime_test_contract(
+            release_root=Path(__file__).parents[4]
+        )
+
     def test_runtime_test_classification_accepts_complete_inventory(
         self, tmp_path: Path
     ) -> None:
-        """Every repository test module is explicitly runtime or build tooling."""
+        """Every repository test module is explicitly runtime, build tooling, or non-CUDA."""
 
         _write_test_inventory(release_root=tmp_path)
 
@@ -951,6 +972,7 @@ def _write_test_inventory(*, release_root: Path) -> None:
     for name in (
         *gpu_validation._RUNTIME_TEST_MODULES,
         *gpu_validation._BUILD_TOOL_TEST_MODULES,
+        *gpu_validation._NON_CUDA_TEST_MODULES,
     ):
         (test_dir / name).touch()
 

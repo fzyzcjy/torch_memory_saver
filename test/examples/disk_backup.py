@@ -7,7 +7,7 @@ import tempfile
 import torch
 
 from torch_memory_saver import torch_memory_saver
-from torch_memory_saver.testing_utils import empty_cache, get_device
+from torch_memory_saver.testing_utils import empty_cache, get_device, is_mlu
 
 
 def run(hook_mode: str):
@@ -62,7 +62,13 @@ def _run(disk_dir: str, device: str):
 
         assert torch.equal(big.cpu(), big_oracle)
         assert torch.equal(small.cpu(), small_oracle)
-        assert no_backup[:3].tolist() != [20, 20, 20]
+        if is_mlu():
+            # CNDriver may reuse the same physical pages. Unbacked contents
+            # are unspecified; verify the restored allocation is writable.
+            no_backup.fill_(37)
+            assert torch.all(no_backup == 37).item()
+        else:
+            assert no_backup[:3].tolist() != [20, 20, 20]
 
     assert len(disk_sizes) == 1, f"disk usage grew across cycles: {sorted(disk_sizes)}"
     print(f"OK: {big.numel()} fp32 elems restored bit-identically across 3 cycles, "
