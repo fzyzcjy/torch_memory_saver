@@ -1,6 +1,7 @@
 """CUDA extensions carry an $ORIGIN DT_RUNPATH so the LD_PRELOAD hook finds the pip CUDA runtime."""
 
 import importlib.util
+import runpy
 from pathlib import Path
 
 import setuptools
@@ -72,3 +73,20 @@ def test_mlu_extensions_use_neuware_without_cuda(monkeypatch, tmp_path):
         assert ext.libraries == ["cndrv", "cnrt", "dl"]
         assert ("USE_MLU", "1") in ext.define_macros
         assert ("USE_CUDA", "1") not in ext.define_macros
+
+
+def test_setup_detects_neuware_automatically(monkeypatch, tmp_path):
+    monkeypatch.delenv("TMS_PLATFORM", raising=False)
+    monkeypatch.delenv("TMS_CUDA_MAJOR", raising=False)
+    monkeypatch.setenv("NEUWARE_HOME", str(tmp_path))
+    monkeypatch.setattr("shutil.which", lambda _: None)
+    monkeypatch.setattr("os.path.isfile", lambda _: False)
+    for relative_path in ("include/cn_api.h", "include/cnrt.h", "lib64/libcndrv.so", "lib64/libcnrt.so"):
+        path = tmp_path / relative_path
+        path.parent.mkdir(exist_ok=True)
+        path.touch()
+    monkeypatch.setattr(setuptools, "setup", lambda **kwargs: None)
+
+    build = runpy.run_path(str(Path(__file__).parents[1] / "setup.py"))
+
+    assert build["platform"] == "mlu"
