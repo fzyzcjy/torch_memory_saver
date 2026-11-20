@@ -18,6 +18,20 @@ def run(hook_mode: str):
     device = get_device()
     mod = get_device_module()
 
+    # Small weights can fit in one caching allocator segment. Allocate the
+    # unbacked weight first so sharing its segment would lose the backup.
+    with torch_memory_saver.region("weights", enable_cpu_backup=False):
+        target = torch.full((4096,), 3.0, device=device)
+    with torch_memory_saver.region("weights", enable_cpu_backup=True):
+        draft = torch.full_like(target, 7.0)
+    expected = draft.cpu()
+    torch_memory_saver.pause("weights")
+    backup = torch_memory_saver.get_cpu_backup(draft)
+    torch_memory_saver.resume("weights")
+    assert backup is not None and torch.equal(backup, expected)
+    assert torch.equal(draft.cpu(), expected)
+    del target, draft, backup
+
     # Pause/resume keeps backup contents; without backup, contents are lost.
     # mmap is unavailable on ROCm; XPU does not take a backend.
     if device in ("cuda", "musa", "mlu") and not torch.version.hip:
