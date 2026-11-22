@@ -199,8 +199,12 @@ compatible `torch_mlu` first and expose Neuware's runtime libraries to the loade
 ```bash
 export NEUWARE_HOME=${NEUWARE_HOME:-/usr/local/neuware}
 export LD_LIBRARY_PATH="$NEUWARE_HOME/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-TMS_PLATFORM=mlu pip install --no-build-isolation .  # or make build-mlu
+pip install --no-build-isolation .
 ```
+
+The build detects MLU from the Neuware headers and libraries after checking for
+HIP, CUDA, MUSA, and XPU. Use `make build-mlu` or set `TMS_PLATFORM=mlu` to
+force MLU on a host with multiple toolchains.
 
 With a compatible installation, importing `torch` automatically registers MLU.
 If `TORCH_DEVICE_BACKEND_AUTOLOAD=0`, import `torch_mlu` before first using

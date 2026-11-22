@@ -54,7 +54,7 @@ def _find_platform_home(platform):
 
 
 def _detect_platform():
-    """Detect whether to use CUDA, HIP, MUSA or XPU based on available tools."""
+    """Select a build backend based on the available toolchains and SDKs."""
     forced = os.environ.get("TMS_PLATFORM")
     if forced:
         return forced
@@ -67,6 +67,8 @@ def _detect_platform():
         return "musa"
     elif _find_icpx() is not None:
         return "xpu"
+    elif _has_mlu():
+        return "mlu"
     else:
         # Default to CUDA if neither is found
         return "cuda"
@@ -78,6 +80,16 @@ def _has_musa():
     if home and os.path.isfile(os.path.join(home, "include", "musa.h")):
         return True
     return shutil.which("mcc") is not None
+
+
+def _has_mlu():
+    home = Path(_find_platform_home("mlu"))
+    return all((home / path).is_file() for path in (
+        "include/cn_api.h",
+        "include/cnrt.h",
+        "lib64/libcndrv.so",
+        "lib64/libcnrt.so",
+    ))
 
 
 class PlatformExtension(setuptools.Extension):
