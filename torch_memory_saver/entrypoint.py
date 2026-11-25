@@ -131,6 +131,24 @@ class TorchMemorySaver:
         self._ensure_initialized()
         self._impl._binary_wrapper.cdll.tms_set_retain_cpu_backup(value)
 
+    @property
+    def cpu_backup_pool_max_bytes(self) -> int:
+        """Byte cap for the released-CPU-backup reuse pool (CUDA only): 0
+        (default) keeps legacy free-on-release, -1 is uncapped, a positive
+        value caps pooled bytes; lowering it frees pooled slots on the spot."""
+        self._ensure_initialized()
+        return self._impl._binary_wrapper.cdll.tms_get_cpu_backup_pool_max_bytes()
+
+    @cpu_backup_pool_max_bytes.setter
+    def cpu_backup_pool_max_bytes(self, value: int):
+        self._ensure_initialized()
+        self._impl._binary_wrapper.cdll.tms_set_cpu_backup_pool_max_bytes(value)
+
+    def get_cpu_backup_pool_bytes(self) -> int:
+        """Bytes currently held in the released-CPU-backup reuse pool."""
+        self._ensure_initialized()
+        return self._impl._binary_wrapper.cdll.tms_get_cpu_backup_pool_bytes()
+
     def get_cpu_backup(self, x: torch.Tensor, zero_copy: bool = False):
         self._ensure_initialized()
         return self._impl.get_cpu_backup(x, zero_copy=zero_copy)
